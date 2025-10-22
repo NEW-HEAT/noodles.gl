@@ -645,7 +645,7 @@ export function NoodlesMenubar({
               {/* TODO: implement Save As... */}
               {/* <Menubar.Item className={s.menubarItem}>Save As...</Menubar.Item> */}
               <Menubar.Item className={s.menubarItem} onSelect={onExport}>
-                Export
+                Download project
               </Menubar.Item>
             </Menubar.Content>
           </Menubar.Portal>
