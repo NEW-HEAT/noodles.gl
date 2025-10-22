@@ -19,6 +19,7 @@
 # production
 /build
 /dist
+/public/app/context
 
 # misc
 .DS_Store
