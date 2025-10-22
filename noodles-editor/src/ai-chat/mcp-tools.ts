@@ -7,6 +7,7 @@ import type {
   SearchCodeResult,
   ConsoleError
 } from './types'
+import { safeStringify } from '../noodles/utils/serialization'
 
 export class MCPTools {
   private consoleErrors: ConsoleError[] = []
@@ -638,9 +639,16 @@ export class MCPTools {
     console.error = (...args: any[]) => {
       this.consoleErrors.push({
         level: 'error',
-        message: args.map(arg =>
-          typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-        ).join(' '),
+        message: args.map(arg => {
+          if (typeof arg === 'object' && arg !== null) {
+            try {
+              return safeStringify(arg)
+            } catch {
+              return '[Object]'
+            }
+          }
+          return String(arg)
+        }).join(' '),
         stack: new Error().stack,
         timestamp: Date.now()
       })
@@ -656,9 +664,16 @@ export class MCPTools {
     console.warn = (...args: any[]) => {
       this.consoleErrors.push({
         level: 'warn',
-        message: args.map(arg =>
-          typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-        ).join(' '),
+        message: args.map(arg => {
+          if (typeof arg === 'object' && arg !== null) {
+            try {
+              return safeStringify(arg)
+            } catch {
+              return '[Object]'
+            }
+          }
+          return String(arg)
+        }).join(' '),
         stack: new Error().stack,
         timestamp: Date.now()
       })
