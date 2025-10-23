@@ -110,9 +110,14 @@ export const BlockLibrary = forwardRef<BlockLibraryRef, BlockLibraryProps>(({ re
   const groupedOptions = useMemo(() => {
     let results = options
 
-    // Filter by search text
+    // Filter by search text (search both display name and description)
     if (searchText) {
-      results = matchSorter(results, searchText)
+      results = matchSorter(results, searchText, {
+        keys: [
+          item => typeDisplayName(item),
+          item => getNodeDescription(item),
+        ],
+      })
     }
 
     // Filter by category
