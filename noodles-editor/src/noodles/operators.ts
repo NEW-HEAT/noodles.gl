@@ -2143,10 +2143,10 @@ export class RandomizeAttributeOp extends Operator<RandomizeAttributeOp> {
   }
 }
 
-export class MergeOp extends Operator<MergeOp> {
-  static displayName = 'Merge'
+export class ConcatOp extends Operator<ConcatOp> {
+  static displayName = 'Concat'
   static description =
-    'Combine multiple arrays into a single array. Use depth to flatten nested arrays (depth=1 flattens one level, depth=2 flattens two levels).'
+    'Concatenate multiple arrays into a single array. Use depth to flatten nested arrays (depth=1 flattens one level, depth=2 flattens two levels).'
   createInputs() {
     return {
       values: new ListField(new DataField()),
@@ -2176,8 +2176,8 @@ export class MergeOp extends Operator<MergeOp> {
   }
 }
 
-export class ObjectMergeOp extends Operator<ObjectMergeOp> {
-  static displayName = 'ObjectMerge'
+export class MergeOp extends Operator<MergeOp> {
+  static displayName = 'Merge'
   static description = 'Merge multiple objects into one (think Object.assign)'
   createInputs() {
     return {
@@ -5036,6 +5036,7 @@ export const opTypes = {
   CombineRGBAOp,
   CombineXYOp,
   CombineXYZOp,
+  ConcatOp,
   ConsoleOp,
   ContainerOp,
   ContourLayerOp,
@@ -5087,7 +5088,6 @@ export const opTypes = {
   MVTLayerOp,
   NetworkOp,
   NumberOp,
-  ObjectMergeOp,
   OrbitViewOp,
   OutOp,
   PathLayerOp,
