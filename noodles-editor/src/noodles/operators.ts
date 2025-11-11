@@ -4249,6 +4249,26 @@ export class GeoJsonOp extends Operator<GeoJsonOp> {
   }
 }
 
+export class KmlToGeoJsonOp extends Operator<KmlToGeoJsonOp> {
+  static displayName = 'KmlToGeoJson'
+  static description = 'Convert KML string to GeoJSON FeatureCollection'
+  asDownload = () => this.outputData
+  createInputs() {
+    return {
+      kml: new CodeField('', { language: 'xml' }),
+    }
+  }
+  createOutputs() {
+    return {
+      geojson: new DataField(),
+    }
+  }
+  execute({ kml }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const geojson = utils.kmlToGeoJson(kml)
+    return { geojson }
+  }
+}
+
 export class GeoJsonTransformOp extends Operator<GeoJsonTransformOp> {
   static displayName = 'GeoJsonTransform'
   static description = 'Transform a GeoJSON feature with scale, translate, and rotate operations'
@@ -5112,6 +5132,7 @@ export const opTypes = {
   HueSaturationExtensionOp,
   IconLayerOp,
   JSONOp,
+  KmlToGeoJsonOp,
   LayerPropsOp,
   LineLayerOp,
   MaplibreBasemapOp,
