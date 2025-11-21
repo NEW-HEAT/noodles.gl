@@ -66,31 +66,16 @@ jobs:
         run: yarn generate:context
         working-directory: ./noodles-editor
 
-      - name: Build app
-        run: yarn build
-        working-directory: ./noodles-editor
-
-      - name: Build website
-        run: yarn build
-        working-directory: ./website
-
-      - name: Setup deployment structure
-        run: |
-          # Create deployment directory structure
-          mkdir -p ./deployment
-          # Copy website (docs) to root
-          cp -r ./website/build/* ./deployment/
-          # Copy app to /app subdirectory
-          mkdir -p ./deployment/app
-          cp -r ./noodles-editor/dist/* ./deployment/app/
+      - name: Build all for GitHub Pages
+        run: yarn build:all
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload deployment structure: website at root, app at /app
-          path: './deployment'
+          # Upload website build: website at root, app at /app
+          path: './website/build'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

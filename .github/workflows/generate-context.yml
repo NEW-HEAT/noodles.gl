@@ -3,6 +3,12 @@ permissions:
   contents: write
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'noodles-editor/src/**'
+      - 'docs/**'
+      - 'noodles-editor/public/examples/**'
   workflow_dispatch:
 
 jobs:

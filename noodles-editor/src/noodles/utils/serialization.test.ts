@@ -222,7 +222,7 @@ describe('serializeNodes', () => {
   })
 
   it('excludes ReferenceEdge connections when determining connected inputs', () => {
-    
+
     setOp('node1', makeOp({ x: 123 }, false))
     setOp('node0', makeOp({ foo: 42 }, false))
 
@@ -363,7 +363,7 @@ describe('serializeEdges', () => {
   })
 
   it('filters out ReferenceEdge types', () => {
-    
+
     const nodes = [
       { id: 'node-0', type: 'NumberOp', data: {}, position: { x: 0, y: 0 } },
       { id: 'node-1', type: 'NumberOp', data: {}, position: { x: 0, y: 0 } },
