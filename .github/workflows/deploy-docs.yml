@@ -71,11 +71,16 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
+
+      - name: Ensure Custom 404 Overwrites Default
+        run: cp website/static/404.html website/build/404.html
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           # Upload website build: website at root, app at /app
           path: './website/build'
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
