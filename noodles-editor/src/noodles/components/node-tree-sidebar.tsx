@@ -1,6 +1,7 @@
 import studio from '@theatre/studio'
 import { useReactFlow } from '@xyflow/react'
 import { useCallback, useMemo, useState } from 'react'
+import { analytics } from '../../utils/analytics'
 import type { IOperator, Operator } from '../operators'
 import { getOpStore, useNestingStore, useOperatorStore } from '../store'
 import { getBaseName } from '../utils/path-utils'
@@ -71,6 +72,7 @@ interface TreeItemProps {
   selectedNodeIds: Set<string>
   onSelect: (id: string) => void
   onNavigate: (id: string) => void
+  onNavigateInto: (id: string) => void
   collapsedNodes: Set<string>
   onToggleCollapse: (id: string) => void
 }
@@ -80,6 +82,7 @@ function TreeItem({
   selectedNodeIds,
   onSelect,
   onNavigate,
+  onNavigateInto,
   collapsedNodes,
   onToggleCollapse,
 }: TreeItemProps) {
@@ -132,17 +135,32 @@ function TreeItem({
           <span className={s.nodeType}>{node.type.replace(/Op$/, '')}</span>
         </div>
         {hovering && (
-          <button
-            type="button"
-            className={s.navigateButton}
-            onClick={e => {
-              e.stopPropagation()
-              onNavigate(node.id)
-            }}
-            title="Navigate to node"
-          >
-            <i className="pi pi-compass" />
-          </button>
+          <>
+            {isContainer && (
+              <button
+                type="button"
+                className={s.navigateButton}
+                onClick={e => {
+                  e.stopPropagation()
+                  onNavigateInto(node.id)
+                }}
+                title="Navigate into container"
+              >
+                <i className="pi pi-arrow-right" />
+              </button>
+            )}
+            <button
+              type="button"
+              className={s.navigateButton}
+              onClick={e => {
+                e.stopPropagation()
+                onNavigate(node.id)
+              }}
+              title="Navigate to node"
+            >
+              <i className="pi pi-compass" />
+            </button>
+          </>
         )}
       </div>
       {isContainer && !isCollapsed && (
@@ -154,6 +172,7 @@ function TreeItem({
               selectedNodeIds={selectedNodeIds}
               onSelect={onSelect}
               onNavigate={onNavigate}
+              onNavigateInto={onNavigateInto}
               collapsedNodes={collapsedNodes}
               onToggleCollapse={onToggleCollapse}
             />
@@ -218,23 +237,41 @@ export function NodeTreeSidebar() {
         nestingStore.setCurrentContainerId('/')
       }
 
-      // Check if already on the same level
-      const isOnSameLevel = currentContainerId === targetContainerId
+      const isChangingLevels = currentContainerId !== targetContainerId
 
-      // Clear selection when changing levels
-      if (!isOnSameLevel) {
-        reactFlow.setNodes(nodes => nodes.map(node => ({ ...node, selected: false })))
+      // Track analytics if we're changing levels
+      if (isChangingLevels) {
+        // Determine direction: up if target is shallower than current
+        const currentDepth = currentContainerId.split('/').filter(Boolean).length
+        const targetDepth = targetContainerId.split('/').filter(Boolean).length
+        const direction = targetDepth < currentDepth ? 'up' : 'into'
+        analytics.track('container_navigated', { method: 'sidebar_target', direction })
+      }
 
-        // When changing levels, show all nodes at that level for context
-        reactFlow.fitView({ duration: 0 })
-      } else {
-        // Same level: zoom directly to the specific node
+      // Use RAF to ensure React state updates have flushed
+      requestAnimationFrame(() => {
+        // Zoom to the specific node (instant if changing levels, animated if same level)
         reactFlow.fitView({
           nodes: [{ id }],
-          duration: 300,
+          duration: isChangingLevels ? 0 : 300,
           padding: 0.5,
         })
-      }
+      })
+    },
+    [reactFlow]
+  )
+
+  const handleNavigateInto = useCallback(
+    (id: string) => {
+      const nestingStore = useNestingStore.getState()
+      // Clear selection when changing levels
+      reactFlow.setNodes(nodes => nodes.map(node => ({ ...node, selected: false })))
+      nestingStore.setCurrentContainerId(id)
+      analytics.track('container_navigated', { method: 'sidebar', direction: 'into' })
+      // Use RAF to ensure React state updates have flushed
+      requestAnimationFrame(() => {
+        reactFlow.fitView({ duration: 0 })
+      })
     },
     [reactFlow]
   )
@@ -261,6 +298,7 @@ export function NodeTreeSidebar() {
             selectedNodeIds={selectedNodeIds}
             onSelect={handleSelect}
             onNavigate={handleNavigate}
+            onNavigateInto={handleNavigateInto}
             collapsedNodes={collapsedNodes}
             onToggleCollapse={handleToggleCollapse}
           />

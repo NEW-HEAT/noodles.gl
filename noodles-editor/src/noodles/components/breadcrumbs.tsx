@@ -1,10 +1,11 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { useKeyPress, useReactFlow } from '@xyflow/react'
+import { useReactFlow } from '@xyflow/react'
 import cx from 'classnames'
 import { type FC, Fragment, useCallback, useEffect } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import { analytics } from '../../utils/analytics'
 import { ContainerOp } from '../operators'
-import { useNestingStore, useOperatorStore } from '../store'
+import { getOpStore, useNestingStore, useOperatorStore } from '../store'
 import { getBaseName, getParentPath, joinPath, splitPath } from '../utils/path-utils'
 import s from './breadcrumbs.module.css'
 
@@ -12,7 +13,6 @@ export const Breadcrumbs: FC = () => {
   const currentContainerId = useNestingStore(state => state.currentContainerId)
   const setCurrentContainerId = useNestingStore(state => state.setCurrentContainerId)
   const reactFlow = useReactFlow()
-  const uPressed = useKeyPress('u', { target: document.body })
 
   const pathSegments = splitPath(currentContainerId).reduce<{ name: string; id: string }[]>(
     (acc, segment) => {
@@ -51,17 +51,69 @@ export const Breadcrumbs: FC = () => {
   }, [reactFlow.fitView, currentContainerId])
 
   const goUp = useCallback(() => {
-    const lastSegment = pathSegments[pathSegments.length - 2]
-    if (lastSegment) {
-      setCurrentContainerId(lastSegment.id)
+    const parentPath = getParentPath(currentContainerId)
+    if (parentPath && parentPath !== currentContainerId) {
+      // Clear selection when changing levels
+      reactFlow.setNodes(nodes => nodes.map(node => ({ ...node, selected: false })))
+      setCurrentContainerId(parentPath)
+      analytics.track('container_navigated', { method: 'keyboard', direction: 'up' })
+      reactFlow.fitView({ duration: 0 })
     }
-  }, [pathSegments, setCurrentContainerId])
+  }, [currentContainerId, setCurrentContainerId, reactFlow])
 
-  useEffect(() => {
-    if (uPressed && pathSegments.length > 1) {
-      goUp()
+  const goInto = useCallback(() => {
+    const nodes = reactFlow.getNodes()
+    const selectedNode = nodes.find(n => n.selected)
+    if (!selectedNode) return
+
+    const store = getOpStore()
+    const op = store.getOp(selectedNode.id)
+    if (op instanceof ContainerOp) {
+      const nodeParent = getParentPath(selectedNode.id)
+      if (nodeParent === currentContainerId) {
+        reactFlow.setNodes(nodes => nodes.map(node => ({ ...node, selected: false })))
+        setCurrentContainerId(selectedNode.id)
+        analytics.track('container_navigated', { method: 'keyboard', direction: 'into' })
+        reactFlow.fitView({ duration: 0 })
+      }
     }
-  }, [uPressed, goUp, pathSegments.length])
+  }, [currentContainerId, reactFlow, setCurrentContainerId])
+
+  // Keyboard navigation handlers
+  useEffect(() => {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'u' && pathSegments.length > 1) {
+        goUp()
+      } else if (e.key === 'i') {
+        goInto()
+      }
+    }
+
+    document.body.addEventListener('keyup', handleKeyUp)
+    return () => {
+      document.body.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [goUp, goInto, pathSegments.length])
+
+  const handleBreadcrumbClick = useCallback(
+    (segmentId: string) => {
+      reactFlow.setNodes(nodes => nodes.map(node => ({ ...node, selected: false })))
+      setCurrentContainerId(segmentId)
+      analytics.track('container_navigated', { method: 'breadcrumb', direction: 'up' })
+      reactFlow.fitView({ duration: 0 })
+    },
+    [reactFlow, setCurrentContainerId]
+  )
+
+  const handleMenuItemClick = useCallback(
+    (itemId: string) => {
+      reactFlow.setNodes(nodes => nodes.map(node => ({ ...node, selected: false })))
+      setCurrentContainerId(itemId)
+      analytics.track('container_navigated', { method: 'menu', direction: 'into' })
+      reactFlow.fitView({ duration: 0 })
+    },
+    [reactFlow, setCurrentContainerId]
+  )
 
   return (
     <div className={s.bar}>
@@ -70,7 +122,7 @@ export const Breadcrumbs: FC = () => {
           <button
             type="button"
             className={cx(s.segment, segment.id === currentContainerId && s.active)}
-            onClick={() => setCurrentContainerId(segment.id)}
+            onClick={() => handleBreadcrumbClick(segment.id)}
           >
             {segment.name}
           </button>
@@ -83,7 +135,7 @@ export const Breadcrumbs: FC = () => {
                 <DropdownMenu.Item
                   key={item}
                   className={s.menuItem}
-                  onClick={() => setCurrentContainerId(item)}
+                  onClick={() => handleMenuItemClick(item)}
                 >
                   {getBaseName(item)}
                 </DropdownMenu.Item>
