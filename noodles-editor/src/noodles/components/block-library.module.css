@@ -194,7 +194,7 @@
   padding: 4px 8px;
   border-radius: 4px;
   white-space: nowrap;
-  color: var(--node-header-text-color);
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 

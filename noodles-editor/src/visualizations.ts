@@ -15,6 +15,7 @@ export type Visualization = {
   // Direct component props (no widgets wrapper)
   flowGraph?: React.ReactNode
   projectNameBar?: React.ReactNode
+  nodeSidebar?: React.ReactNode
   propertiesPanel?: React.ReactNode
   layoutMode?: 'split' | 'noodles-on-top' | 'output-on-top'
   // Noodles props for creating menu in timeline-editor

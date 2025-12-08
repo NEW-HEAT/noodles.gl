@@ -34,8 +34,19 @@ const injectTheatreStyles = () => {
     const style = document.createElement('style')
     style.id = 'hide-export-style'
     style.textContent = `
-      /* Hide all panels except properties (export button, sheet name) - using generated class name (brittle) */
+      /* Hide all panels except properties (export button, sheet name) */
       .sc-dPZUQH:not([data-testid="DetailPanel-Object"]) {
+        display: none !important;
+      }
+
+      /* Hide the left sidebar (sheet tree panel) */
+      [data-testid="SequenceEditorPanel-tree"],
+      .sc-djVXDX.fXnbPU {
+        display: none !important;
+      }
+
+      /* Hide the sidebar top bar */
+      .sc-cHMHOW.dGwDVq {
         display: none !important;
       }
     `
@@ -139,7 +150,7 @@ export default function TimelineEditor() {
   }, [])
 
   const noodles = getNoodles()
-  const { project, sheet, flowGraph, projectNameBar, propertiesPanel, layoutMode, ...visualization } = noodles
+  const { project, sheet, flowGraph, projectNameBar, nodeSidebar, propertiesPanel, layoutMode, ...visualization } = noodles
   const sequence = sheet.sequence
 
   useEffect(() => {
@@ -325,7 +336,6 @@ export default function TimelineEditor() {
     })
   }, [project.address.projectId, redraw, basemapEnabled])
 
-
   // Increase the render target resolution to increase map tile detail.
   // To convert viewport bounds back to their original size, add about 1 to the zoom value.
   const lodResolution = {
@@ -394,6 +404,7 @@ export default function TimelineEditor() {
               isRendering={isRendering}
             />
           }
+          left={nodeSidebar}
           right={propertiesPanel}
           flowGraph={flowGraph}
           layoutMode={layoutMode}
