@@ -8,8 +8,9 @@ import type { Map as MapLibre } from 'maplibre-gl'
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMapGL, { type MapProps, useControl } from 'react-map-gl/maplibre'
 import { Layout } from './layout'
-import { NoodlesMenubar } from './noodles/components/menu'
 import { getNoodles } from './noodles/noodles'
+import { TopMenuBar } from './noodles/components/top-menu-bar'
+import { setSheetObject, deleteSheetObject } from './noodles/store'
 import { useDeckDrawLoop } from './render/draw-loop'
 import { captureScreenshot, rafDriver, useRenderer } from './render/renderer'
 import { TransformScale } from './render/transform-scale'
@@ -153,7 +154,6 @@ export default function TimelineEditor() {
     project,
     sheet,
     flowGraph,
-    projectNameBar,
     nodeSidebar,
     propertiesPanel,
     layoutMode,
@@ -172,6 +172,16 @@ export default function TimelineEditor() {
       rendererSheet,
     }
   }, [sheet])
+
+  // Register render sheet object in store for menu access
+  useEffect(() => {
+    if (rendererSheet) {
+      setSheetObject('render', rendererSheet as any)
+    }
+    return () => {
+      deleteSheetObject('render')
+    }
+  }, [rendererSheet])
 
   const renderer = useSheetValue(rendererSheet)
 
@@ -381,6 +391,26 @@ export default function TimelineEditor() {
     )
   }
 
+  const topBar = (
+    <TopMenuBar
+      projectName={noodles.projectName}
+      onSaveProject={noodles.onSaveProject!}
+      onDownload={noodles.onDownload}
+      onNewProject={noodles.onNewProject!}
+      onImport={noodles.onImport!}
+      onOpen={noodles.onOpen}
+      onOpenAddNode={noodles.onOpenAddNode}
+      showChatPanel={noodles.showChatPanel}
+      setShowChatPanel={noodles.setShowChatPanel}
+      undoRedoRef={noodles.undoRedoRef!}
+      copyControlsRef={noodles.copyControlsRef!}
+      startRender={startRender}
+      takeScreenshot={takeScreenshot}
+      isRendering={isRendering}
+      hasUnsavedChanges={noodles.hasUnsavedChanges}
+    />
+  )
+
   return (
     <>
       {isRendering && (
@@ -396,25 +426,7 @@ export default function TimelineEditor() {
       )}
       <ReactFlowProvider>
         <Layout
-          top={projectNameBar}
-          bottom={
-            <NoodlesMenubar
-              projectName={noodles.projectName}
-              setProjectName={noodles.setProjectName!}
-              getTimelineJson={noodles.getTimelineJson!}
-              onSaveProject={noodles.onSaveProject!}
-              onDownload={noodles.onDownload!}
-              onNewProject={noodles.onNewProject!}
-              onImport={noodles.onImport!}
-              onOpen={noodles.onOpen!}
-              undoRedo={noodles.undoRedo ?? undefined}
-              showChatPanel={noodles.showChatPanel}
-              setShowChatPanel={noodles.setShowChatPanel}
-              startRender={startRender}
-              takeScreenshot={takeScreenshot}
-              isRendering={isRendering}
-            />
-          }
+          top={topBar}
           left={nodeSidebar}
           right={propertiesPanel}
           flowGraph={flowGraph}

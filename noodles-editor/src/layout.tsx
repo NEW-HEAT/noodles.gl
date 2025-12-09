@@ -3,7 +3,7 @@ import { type PropsWithChildren, useEffect, useRef, useState } from 'react'
 import s from './layout.module.css'
 
 const TheatrePropPanel = ({ width, height }: { width: number; height: number }) => (
-  <div style={{ width: `${width + 16}px`, height: `${height + 60}px` }} />
+  <div style={{ width: `${width + 16}px`, height: `${height + 8}px` }} />
 )
 
 const LAYOUT_CLASSES = {
@@ -72,10 +72,10 @@ export function Layout({
   return (
     <div className={cx(s.layout, layoutClass)}>
       <div style={{ gridArea: 'top-bar' }}>{top}</div>
-      <div style={{ gridArea: 'left-widget' }}>{left}</div>
-      <div style={{ gridArea: 'right-widget', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ gridArea: 'left-widget', minHeight: 0 }}>{left}</div>
+      <div style={{ gridArea: 'right-widget', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <TheatrePropPanel width={propPanelWidth} height={propPanelHeight} />
-        <div style={{ flex: 1 }}>{right}</div>
+        <div style={{ flex: 1, minHeight: 0 }}>{right}</div>
       </div>
       <div style={{ gridArea: 'bottom-widget' }}>{bottom}</div>
       <div className={cx(s.fillWidget, layoutClass)}>

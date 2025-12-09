@@ -492,7 +492,7 @@ const numberOps = data.map((value, i) => {
 yarn install:all
 
 # Start development server
-yarn start:app            # or cd noodles-editor && yarn start
+cd noodles-editor && yarn start
 
 # Run tests
 cd noodles-editor && yarn test
@@ -504,6 +504,13 @@ cd noodles-editor && yarn fix-lint
 # Build for production
 yarn build:all
 ```
+
+**Node.js Version Requirements:**
+- Vite requires Node.js 20.19+ or 22.12+
+- If you encounter errors like `crypto.hash is not a function`, your Node version may be incompatible
+- **Recommended**: Use [Volta](https://volta.sh/) for automatic Node.js version management
+  - Volta automatically uses the correct Node version specified in package.json
+  - Run commands with `volta run yarn start` to ensure correct version
 
 ### Development URLs
 

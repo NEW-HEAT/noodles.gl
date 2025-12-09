@@ -9,7 +9,12 @@ import { getOpStore, useNestingStore, useOperatorStore } from '../store'
 import { getBaseName, getParentPath, joinPath, splitPath } from '../utils/path-utils'
 import s from './breadcrumbs.module.css'
 
-export const Breadcrumbs: FC = () => {
+interface BreadcrumbsProps {
+  projectName?: string
+  hasUnsavedChanges?: boolean
+}
+
+export const Breadcrumbs: FC<BreadcrumbsProps> = ({ projectName, hasUnsavedChanges }) => {
   const currentContainerId = useNestingStore(state => state.currentContainerId)
   const setCurrentContainerId = useNestingStore(state => state.setCurrentContainerId)
   const reactFlow = useReactFlow()
@@ -17,7 +22,7 @@ export const Breadcrumbs: FC = () => {
   const pathSegments = splitPath(currentContainerId).reduce<{ name: string; id: string }[]>(
     (acc, segment) => {
       acc.push({
-        name: segment === '/' || segment === '' ? 'root' : segment,
+        name: segment === '/' || segment === '' ? projectName || 'Untitled' : segment,
         id: joinPath(...acc.map(s => s.id), segment),
       })
       return acc
@@ -117,7 +122,7 @@ export const Breadcrumbs: FC = () => {
 
   return (
     <div className={s.bar}>
-      {pathSegments.map(segment => (
+      {pathSegments.map((segment, index) => (
         <Fragment key={segment.id}>
           <button
             type="button"
@@ -125,6 +130,11 @@ export const Breadcrumbs: FC = () => {
             onClick={() => handleBreadcrumbClick(segment.id)}
           >
             {segment.name}
+            {index === 0 && hasUnsavedChanges && (
+              <span className={s.unsavedIndicator} title="Unsaved changes">
+                <span className={s.unsavedDot} />
+              </span>
+            )}
           </button>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger>
