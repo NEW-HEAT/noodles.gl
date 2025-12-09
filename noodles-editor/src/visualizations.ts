@@ -22,7 +22,11 @@ export type Visualization = {
   projectName?: string
   setProjectName?: (name: React.SetStateAction<string | null>) => void
   getTimelineJson?: () => Record<string, unknown>
-  loadProjectFile?: (project: any, name?: string) => void
+  onSaveProject?: () => Promise<void>
+  onDownload?: () => Promise<void>
+  onNewProject?: () => Promise<void>
+  onImport?: () => Promise<void>
+  onOpen?: (projectName?: string) => Promise<void>
   undoRedo?: {
     undo: () => void
     redo: () => void

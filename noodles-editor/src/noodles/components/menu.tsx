@@ -7,16 +7,12 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useState } 
 import { SettingsDialog } from '../../components/settings-dialog'
 import { analytics } from '../../utils/analytics'
 import { useActiveStorageType, useFileSystemStore } from '../filesystem-store'
-import newProjectJSON from '../new.json'
-import { getProjectDirectoryHandle, load, save } from '../storage'
+import { save } from '../storage'
 import { getOpStore } from '../store'
-import { directoryExists, type StorageType } from '../utils/filesystem'
-import { migrateProject } from '../utils/migrate-schema'
+import { directoryHandleCache } from '../utils/directory-handle-cache'
 import {
-  EMPTY_PROJECT,
   NOODLES_VERSION,
   type NoodlesProjectJSON,
-  safeStringify,
   serializeEdges,
   serializeNodes,
 } from '../utils/serialization'
@@ -288,64 +284,6 @@ async function deleteProject(projectName: string) {
   }
 }
 
-async function saveProjectLocally(
-  projectName: string,
-  projectJson: NoodlesProjectJSON,
-  storageType: StorageType
-) {
-  const JSZip = (await import('jszip')).default
-  const zip = new JSZip()
-
-  // Create a folder with the project name
-  const projectFolder = zip.folder(projectName)
-  if (!projectFolder) {
-    throw new Error('Failed to create project folder in zip')
-  }
-
-  // Add noodles.json to the project folder
-  const contents = safeStringify(projectJson)
-  projectFolder.file('noodles.json', contents)
-
-  // Try to get the project directory handle to read data files
-  try {
-    const projectDirectoryResult = await getProjectDirectoryHandle(storageType, projectName, false)
-
-    if (projectDirectoryResult.success) {
-      const projectDirectory = projectDirectoryResult.data
-      const hasDataDir = await directoryExists(projectDirectory, 'data')
-
-      if (hasDataDir) {
-        const dataDirectory = await projectDirectory.getDirectoryHandle('data')
-
-        // Read all files from the data directory
-        for await (const entry of dataDirectory.values()) {
-          if (entry.kind === 'file') {
-            const fileHandle = entry as FileSystemFileHandle
-            const file = await fileHandle.getFile()
-            const arrayBuffer = await file.arrayBuffer()
-            projectFolder.file(`data/${entry.name}`, arrayBuffer)
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('Could not read data files for export:', error)
-    // Continue with export even if data files can't be read
-  }
-
-  // Generate the zip file and trigger download
-  const blob = await zip.generateAsync({ type: 'blob' })
-
-  const a = document.createElement('a')
-  a.download = `${projectName}.zip`
-  const url = URL.createObjectURL(blob)
-  a.href = url
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
 type ProjectList = {
   name: string
   lastModified: Date
@@ -373,45 +311,19 @@ async function listProjects(): Promise<ProjectList> {
 // Open Recent...
 type RecentProject = {
   name: string
-  lastOpened: string
 }
 
-const RECENT_PROJECTS_KEY = 'recentProjects'
-function getRecentProjects(): RecentProject[] {
-  return JSON.parse(localStorage.getItem(RECENT_PROJECTS_KEY)) || []
-}
-
-const MAX_RECENT_PROJECTS = 6
-function addToRecentProjects(projectName: string) {
-  const recentProjects = getRecentProjects()
-
-  // Remove the project if it's already in the list
-  const existingIndex = recentProjects.findIndex(
-    (project: RecentProject) => project.name === projectName
-  )
-  if (existingIndex !== -1) {
-    recentProjects.splice(existingIndex, 1)
-  }
-
-  // Add the new project with a timestamp
-  recentProjects.unshift({
-    name: projectName,
-    lastOpened: new Date().toISOString(),
-  })
-
-  // Limit the list to the most recent projects
-  if (recentProjects.length > MAX_RECENT_PROJECTS) {
-    recentProjects.pop()
-  }
-
-  localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(recentProjects))
-}
+const MAX_RECENT_PROJECTS = 10
 
 export function NoodlesMenubar({
   projectName,
-  loadProjectFile,
   getTimelineJson,
   setProjectName,
+  onSaveProject,
+  onDownload,
+  onNewProject,
+  onImport,
+  onOpen,
   undoRedo,
   showChatPanel,
   setShowChatPanel,
@@ -420,9 +332,13 @@ export function NoodlesMenubar({
   isRendering,
 }: {
   projectName?: string
-  loadProjectFile: (project: NoodlesProjectJSON, projectName?: string) => void
   getTimelineJson: () => Record<string, unknown>
   setProjectName: Dispatch<SetStateAction<string | null>>
+  onSaveProject: () => Promise<void>
+  onDownload: () => Promise<void>
+  onNewProject: () => Promise<void>
+  onImport: () => Promise<void>
+  onOpen: (projectName?: string) => Promise<void>
   undoRedo?: {
     undo: () => void
     redo: () => void
@@ -441,37 +357,9 @@ export function NoodlesMenubar({
   const storageType = useActiveStorageType()
   const { setCurrentDirectory, setError } = useFileSystemStore()
 
-  // "New" Menu Options
-  const onNewProject = useCallback(async () => {
-    loadProjectFile(newProjectJSON as NoodlesProjectJSON)
-    analytics.track('project_created', { method: 'new' })
-  }, [loadProjectFile])
-
-  const onImport = useCallback(async () => {
-    const [fileHandle] = await window.showOpenFilePicker({
-      types: [
-        {
-          description: 'JSON Files',
-          accept: {
-            'application/json': ['.json'],
-          },
-        },
-      ],
-      excludeAcceptAllOption: true,
-      multiple: false,
-    })
-    const file = await fileHandle.getFile()
-    const contents = await file.text()
-    const parsed = JSON.parse(contents) as Partial<NoodlesProjectJSON>
-    const project = await migrateProject({
-      ...EMPTY_PROJECT,
-      ...parsed,
-    } as NoodlesProjectJSON)
-    // "New project from local copy" means import a file into a blank project.
-    // Resets the name to avoid conflict with an existing stored projects.
-    loadProjectFile(project)
-    analytics.track('project_imported')
-  }, [loadProjectFile])
+  // "New" Menu Options - use callbacks from noodles.tsx
+  const handleNewProject = onNewProject
+  const handleImport = onImport
 
   // "Save" Menu Options
   const [saveProjectDialogOpen, setSaveProjectDialogOpen] = useState(false)
@@ -494,25 +382,8 @@ export function NoodlesMenubar({
     }
   }, [toObject, getTimelineJson])
 
-  // Basic save case. If the project is already named, save it.
-  // Cache-aware: save will prompt user if project directory not cached for fileSystemAccess
-  const onMenuSave = useCallback(async () => {
-    if (!projectName) {
-      setSaveProjectDialogOpen(true)
-      return // return early if the project has no name
-    }
-    const noodlesProjectJson = getNoodlesProjectJson()
-    const result = await save(storageType, projectName, noodlesProjectJson)
-    if (result.success) {
-      addToRecentProjects(projectName)
-      // Update store with directory handle returned from save
-      setCurrentDirectory(result.data.directoryHandle, projectName)
-      analytics.track('project_saved', { storageType, isFirstSave: false })
-    } else {
-      setError(result.error)
-      analytics.track('project_save_failed', { storageType, error: 'save_error' })
-    }
-  }, [projectName, storageType, getNoodlesProjectJson, setCurrentDirectory, setError])
+  // Use save callback from noodles.tsx
+  const handleSave = onSaveProject
 
   // This is a new project, so they need to name it before saving.
   const maybeSetProjectName = useCallback(
@@ -526,7 +397,6 @@ export function NoodlesMenubar({
       const noodlesProjectJson = getNoodlesProjectJson()
       const result = await save(storageType, name, noodlesProjectJson)
       if (result.success) {
-        addToRecentProjects(name)
         // Update store with directory handle returned from save
         setCurrentDirectory(result.data.directoryHandle, name)
       } else {
@@ -542,7 +412,6 @@ export function NoodlesMenubar({
     const noodlesProjectJson = getNoodlesProjectJson()
     const result = await save(storageType, projectName!, noodlesProjectJson)
     if (result.success) {
-      addToRecentProjects(projectName!)
       // Update store with directory handle returned from save
       setCurrentDirectory(result.data.directoryHandle, projectName!)
     } else {
@@ -557,11 +426,8 @@ export function NoodlesMenubar({
     setSaveProjectDialogOpen(true)
   }, [setProjectName])
 
-  const onExport = useCallback(async () => {
-    const noodlesProjectJson = getNoodlesProjectJson()
-    saveProjectLocally(projectName || 'untitled', noodlesProjectJson, storageType)
-    analytics.track('project_exported', { storageType })
-  }, [projectName, getNoodlesProjectJson, storageType])
+  // Use download callback from noodles.tsx
+  const handleExport = onDownload
 
   // "Open" Menu Options
   const [openProjectDialogOpen, setOpenProjectDialogOpen] = useState(false)
@@ -569,101 +435,30 @@ export function NoodlesMenubar({
   // Settings Dialog
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
 
-  // Load project by name (for OPFS projects from list)
-  const onOpenProject = useCallback(
-    (name: string) => {
-      ;(async () => {
-        // Cache-aware: load will prompt user if project directory not cached for fileSystemAccess
-        const result = await load(storageType, name)
-        if (result.success) {
-          try {
-            const project = await migrateProject(result.data.projectData)
-            loadProjectFile(project, name)
-            addToRecentProjects(name)
-            // Update store with directory handle returned from load
-            setCurrentDirectory(result.data.directoryHandle, name)
-            analytics.track('project_opened', { storageType })
-          } catch (error) {
-            setError({
-              type: 'unknown',
-              message: 'Error migrating project',
-              details: error instanceof Error ? error.message : 'Unknown error',
-              originalError: error,
-            })
-            analytics.track('project_open_failed', { storageType, error: 'migration_error' })
-          }
-        } else {
-          setError(result.error)
-          analytics.track('project_open_failed', { storageType, error: 'load_error' })
-        }
-      })()
-    },
-    [storageType, loadProjectFile, setCurrentDirectory, setError]
-  )
-
-  // Open File System Access API folder picker
-  const onOpenFileSystemFolder = useCallback(async () => {
-    try {
-      // Dynamically import filesystem utilities to avoid circular dependencies
-      const { directoryHandleCache } = await import('../utils/directory-handle-cache')
-      const { selectDirectory } = await import('../utils/filesystem')
-      const { load } = await import('../storage')
-
-      // Show the native folder picker
-      const projectDirectory = await selectDirectory()
-
-      // Use the directory name as the project name
-      const projectName = projectDirectory.name
-
-      await directoryHandleCache.cacheHandle(projectName, projectDirectory, projectDirectory.name)
-
-      const result = await load('fileSystemAccess', projectDirectory)
-
-      if (result.success) {
-        try {
-          const project = await migrateProject(result.data.projectData)
-          loadProjectFile(project, projectName)
-          addToRecentProjects(projectName)
-          // Update store with directory handle returned from load
-          setCurrentDirectory(result.data.directoryHandle, projectName)
-        } catch (error) {
-          setError({
-            type: 'unknown',
-            message: 'Error migrating project',
-            details: error instanceof Error ? error.message : 'Unknown error',
-            originalError: error,
-          })
-        }
-      } else {
-        setError(result.error)
-      }
-    } catch (error) {
-      // Handle abort error silently (user cancelled folder picker)
-      if (error instanceof Error && error.name === 'AbortError') {
-        return
-      }
-      setError({
-        type: 'unknown',
-        message: 'Error opening folder',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        originalError: error,
-      })
-    }
-  }, [loadProjectFile, setCurrentDirectory, setError])
-
   // Handle "Open..." button click based on storage type
   const onOpenMenuClick = useCallback(() => {
     if (storageType === 'fileSystemAccess') {
       // For File System Access API, directly show folder picker
-      onOpenFileSystemFolder()
+      onOpen()
     } else {
       // For OPFS, show project list dialog
       setOpenProjectDialogOpen(true)
     }
-  }, [storageType, onOpenFileSystemFolder])
+  }, [storageType, onOpen])
 
   const updateRecentlyOpened = useCallback(() => {
-    setRecentlyOpened(getRecentProjects())
+    ;(async () => {
+      const cachedHandles = await directoryHandleCache.getAllCachedHandles()
+
+      // Convert to RecentProject format and limit to MAX_RECENT_PROJECTS
+      const recentProjects: RecentProject[] = cachedHandles
+        .slice(0, MAX_RECENT_PROJECTS)
+        .map(entry => ({
+          name: entry.projectName,
+        }))
+
+      setRecentlyOpened(recentProjects)
+    })()
   }, [])
 
   return (
@@ -678,10 +473,10 @@ export function NoodlesMenubar({
               sideOffset={5}
               alignOffset={-3}
             >
-              <Menubar.Item className={s.menubarItem} onSelect={onNewProject}>
+              <Menubar.Item className={s.menubarItem} onSelect={handleNewProject}>
                 New Project <div className={s.menubarItemRightSlot}>⌘ N</div>
               </Menubar.Item>
-              <Menubar.Item className={s.menubarItem} onSelect={onImport}>
+              <Menubar.Item className={s.menubarItem} onSelect={handleImport}>
                 Import
               </Menubar.Item>
               <Menubar.Separator className={s.menubarSeparator} />
@@ -701,7 +496,7 @@ export function NoodlesMenubar({
                       <Menubar.Item
                         key={recent.name}
                         className={s.menubarItem}
-                        onSelect={() => onOpenProject(recent.name)}
+                        onSelect={() => onOpen(recent.name)}
                       >
                         {recent.name}
                       </Menubar.Item>
@@ -710,12 +505,12 @@ export function NoodlesMenubar({
                 </Menubar.Portal>
               </Menubar.Sub>
               <Menubar.Separator className={s.menubarSeparator} />
-              <Menubar.Item className={s.menubarItem} onSelect={onMenuSave}>
+              <Menubar.Item className={s.menubarItem} onSelect={handleSave}>
                 Save
               </Menubar.Item>
               {/* TODO: implement Save As... */}
               {/* <Menubar.Item className={s.menubarItem}>Save As...</Menubar.Item> */}
-              <Menubar.Item className={s.menubarItem} onSelect={onExport}>
+              <Menubar.Item className={s.menubarItem} onSelect={handleExport}>
                 Download project
               </Menubar.Item>
             </Menubar.Content>
@@ -847,7 +642,7 @@ export function NoodlesMenubar({
       <OpenProjectDialog
         openDialog={openProjectDialogOpen}
         setOpenDialog={setOpenProjectDialogOpen}
-        onSelectProject={onOpenProject}
+        onSelectProject={onOpen}
       />
       <SettingsDialog open={settingsDialogOpen} setOpen={setSettingsDialogOpen} />
     </>
