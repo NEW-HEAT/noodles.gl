@@ -1,8 +1,9 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { HamburgerMenuIcon } from '@radix-ui/react-icons'
+import { ChevronDownIcon, ExternalLinkIcon } from '@radix-ui/react-icons'
 import studio from '@theatre/studio'
 import { useReactFlow } from '@xyflow/react'
 import { type RefObject, useCallback, useEffect, useMemo, useState } from 'react'
+import logoSvg from '/noodles-favicon.svg'
 import { SettingsDialog } from '../../components/settings-dialog'
 import { analytics } from '../../utils/analytics'
 import { ContainerOp } from '../operators'
@@ -178,8 +179,11 @@ export function TopMenuBar({
         <div className={s.leftSection}>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <button type="button" className={s.hamburgerButton} title="Menu">
-                <HamburgerMenuIcon />
+              <button type="button" className={s.logoButton} title="Menu">
+                <div className={s.logoContainer}>
+                  <img src={logoSvg} alt="Noodles.gl" className={s.logo} />
+                </div>
+                <ChevronDownIcon className={s.chevron} />
               </button>
             </DropdownMenu.Trigger>
 
@@ -375,6 +379,40 @@ export function TopMenuBar({
                 >
                   App Settings
                 </DropdownMenu.Item>
+
+                <DropdownMenu.Separator className={s.dropdownSeparator} />
+
+                <DropdownMenu.Item className={s.dropdownItem} asChild>
+                  <a
+                    href="https://noodles.gl/users/getting-started"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={s.externalLink}
+                  >
+                    Documentation
+                    <ExternalLinkIcon className={s.menuExternalIcon} />
+                  </a>
+                </DropdownMenu.Item>
+
+                <div className={s.dropdownFooter}>
+                  <a
+                    href="https://noodles.gl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={s.footerLink}
+                  >
+                    noodles.gl
+                  </a>
+                  <span className={s.footerSeparator}>•</span>
+                  <a
+                    href="https://github.com/joby-aviation/noodles.gl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={s.footerLink}
+                  >
+                    GitHub
+                  </a>
+                </div>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>

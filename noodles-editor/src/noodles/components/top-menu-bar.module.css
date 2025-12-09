@@ -6,13 +6,11 @@
   padding: 0 12px;
   background: var(--color-bg-base);
   border-bottom: 1px solid var(--color-border);
-  gap: 16px;
 }
 
 .leftSection {
   display: flex;
   align-items: center;
-  gap: 12px;
   flex: 1;
   min-width: 0;
 }
@@ -24,27 +22,51 @@
   flex-shrink: 0;
 }
 
-.hamburgerButton {
+.logoButton {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
+  gap: 4px;
+  padding: 4px 6px 4px 8px;
   background: none;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: var(--color-text-primary);
   transition: background-color 0.15s;
 }
 
-.hamburgerButton:hover {
+.logoButton:hover {
   background: var(--color-bg-hover);
 }
 
-.hamburgerButton:active {
+.logoButton:active {
   background: var(--color-bg-active);
+}
+
+.logoButton[data-state='open'] {
+  background: var(--color-bg-active);
+}
+
+.logoContainer {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.logo {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-primary);
+  flex-shrink: 0;
 }
 
 .breadcrumbContainer {
@@ -130,4 +152,62 @@
   color: var(--color-text-secondary);
   margin-left: auto;
   font-family: monospace;
+}
+
+.dropdownFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 12px 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.footerLink {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.footerLink:hover {
+  color: var(--color-text-accent);
+}
+
+.footerLink:hover .externalIcon {
+  color: var(--color-text-accent);
+}
+
+.externalIcon {
+  width: 10px;
+  height: 10px;
+  color: var(--color-text-secondary);
+  transition: color 0.15s;
+  opacity: 0.6;
+}
+
+.footerSeparator {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+}
+
+.externalLink {
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.menuExternalIcon {
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-primary);
+  opacity: 0.6;
+  flex-shrink: 0;
 }
