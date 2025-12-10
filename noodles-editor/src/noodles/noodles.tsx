@@ -13,12 +13,11 @@ import {
   Background,
   Controls,
   ReactFlow,
+  type ReactFlowInstance,
   reconnectEdge,
   useEdgesState,
-  useKeyPress,
   useNodesState,
   useReactFlow,
-  type ReactFlowInstance,
 } from '@xyflow/react'
 import cx from 'classnames'
 import type { LayerExtension } from 'deck.gl'
@@ -56,6 +55,7 @@ import { StorageErrorHandler } from './components/storage-error-handler'
 import { UndoRedoHandler, type UndoRedoHandlerRef } from './components/UndoRedoHandler'
 import { useActiveStorageType, useFileSystemStore } from './filesystem-store'
 import { IS_PROD } from './globals'
+import { useKeyboardShortcut } from './hooks/use-keyboard-shortcut'
 import { useProjectModifications } from './hooks/use-project-modifications'
 import type { IOperator, Operator, OutOp } from './operators'
 import { extensionMap } from './operators'
@@ -212,8 +212,6 @@ export function getNoodles(): Visualization {
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<AnyNodeJSON>([])
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<ReactFlowEdge<unknown>>([])
   const [defaultViewport, setDefaultViewport] = useState({ x: 0, y: 0, zoom: 1 })
-  const vPressed = useKeyPress('v')
-  const aPressed = useKeyPress('a')
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
@@ -411,22 +409,10 @@ export function getNoodles(): Visualization {
     blockLibraryRef.current?.openModal(event.clientX, event.clientY)
   }, [])
 
-  const vPressHandledRef = useRef(false)
-
   const currentContainerId = useNestingStore(state => state.currentContainerId)
 
-  // Handle 'v' key press to create ViewerOp
-  useEffect(() => {
-    if (!vPressed) {
-      // Reset the flag when key is released
-      vPressHandledRef.current = false
-      return
-    }
-
-    // Only handle once per key press
-    if (vPressHandledRef.current) return
-    vPressHandledRef.current = true
-
+  // Handle 'v' keyup to create ViewerOp (momentary button behavior)
+  useKeyboardShortcut('v', () => {
     analytics.track('viewer_created', { method: 'keyboard' })
 
     setNodes(currentNodes => {
@@ -541,22 +527,10 @@ export function getNoodles(): Visualization {
 
       return [...currentNodes, viewerNode]
     })
-  }, [vPressed, setNodes, setEdges, currentContainerId])
+  }, [setNodes, setEdges, currentContainerId])
 
-  const aPressHandledRef = useRef(false)
-
-  // Handle 'a' key press to open Block Library
-  useEffect(() => {
-    if (!aPressed) {
-      // Reset the flag when key is released
-      aPressHandledRef.current = false
-      return
-    }
-
-    // Only handle once per key press
-    if (aPressHandledRef.current) return
-    aPressHandledRef.current = true
-
+  // Handle 'a' keyup to open Block Library (momentary button behavior)
+  useKeyboardShortcut('a', () => {
     analytics.track('block_library_opened', { method: 'keyboard' })
 
     // Open Block Library at center of screen
@@ -566,7 +540,7 @@ export function getNoodles(): Visualization {
     const centerX = pane.left + pane.width / 2
     const centerY = pane.top + pane.height / 2
     blockLibraryRef.current?.openModal(centerX, centerY)
-  }, [aPressed])
+  }, [])
 
   const editorSheet = useMemo(() => {
     return theatreSheet.object('editor', {
@@ -591,12 +565,7 @@ export function getNoodles(): Visualization {
 
   const loadProjectFile = useCallback(
     (project: NoodlesProjectJSON, name?: string) => {
-      const {
-        nodes,
-        edges,
-        viewport,
-        timeline,
-      } = project
+      const { nodes, edges, viewport, timeline } = project
 
       // Update current project ref for undo/redo
       currentProjectRef.current = project
