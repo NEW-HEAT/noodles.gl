@@ -14,6 +14,7 @@ import {
   type LayerProps,
   MapView,
   OrbitView,
+  OrthographicView,
   WebMercatorViewport,
 } from '@deck.gl/core'
 import {
@@ -2702,13 +2703,13 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
 // - unique view props ordered by most to least often used.
 // - viewState props ordered by most to least often used.
 // - override props go last (e.g. projectionMatrix)
+// Base view fields that apply to all view types
 function createBaseViewFields() {
   return {
     x: new NumberField(0),
     y: new NumberField(0),
     width: new StringField('100%'),
     height: new StringField('100%'),
-    orthographic: new BooleanField(false),
     padding: new CompoundPropsField({
       top: new NumberField(0, { min: 0 }),
       right: new NumberField(0, { min: 0 }),
@@ -2742,6 +2743,7 @@ export class MapViewOp extends Operator<MapViewOp> {
   createInputs() {
     return {
       ...createBaseViewFields(),
+      orthographic: new BooleanField(false),
       fovy: new NumberField(40, { min: 0.1, max: 179.9 }),
       repeat: new BooleanField(false),
       ...createGeoViewFields(),
@@ -2870,7 +2872,6 @@ function createFrustumViewFields() {
   return {
     near: new NumberField(0.1, { min: 0, max: 1_000_000, step: 0.1 }),
     far: new NumberField(100000, { min: 0, max: 1_000_000 }),
-    fovy: new NumberField(40, { min: 0.1, max: 179.9 }),
   }
 }
 
@@ -2881,7 +2882,9 @@ export class FirstPersonViewOp extends Operator<FirstPersonViewOp> {
   createInputs() {
     return {
       ...createBaseViewFields(),
+      orthographic: new BooleanField(false),
       ...createFrustumViewFields(),
+      fovy: new NumberField(40, { min: 0.1, max: 179.9 }),
       // focalDistance: new NumberField(1),
       viewState: new CompoundPropsField({
         ...createGeoViewStateFields(),
@@ -2911,10 +2914,12 @@ export class OrbitViewOp extends Operator<OrbitViewOp> {
   createInputs() {
     return {
       ...createBaseViewFields(),
+      orthographic: new BooleanField(false),
       orbitAxis: new StringLiteralField('Z', {
         values: ['X', 'Y', 'Z'],
       }),
       ...createFrustumViewFields(),
+      fovy: new NumberField(40, { min: 0.1, max: 179.9 }),
       viewState: new CompoundPropsField({
         target: new Vec3Field([0, 0, 0], { returnType: 'tuple', optional: true }),
         rotationOrbit: new NumberField(0, { optional: true }),
@@ -2933,6 +2938,34 @@ export class OrbitViewOp extends Operator<OrbitViewOp> {
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     validateViewState(props.viewState)
     return { view: new OrbitView({ id: this.id, ...props }) }
+  }
+}
+
+export class OrthographicViewOp extends Operator<OrthographicViewOp> {
+  static displayName = 'OrthographicView'
+  static description = 'A deck.gl orthographic view.'
+
+  createInputs() {
+    return {
+      ...createBaseViewFields(),
+      ...createFrustumViewFields(),
+      flipY: new BooleanField(false),
+      viewState: new CompoundPropsField({
+        target: new Vec3Field([0, 0, 0], { returnType: 'tuple', optional: true }),
+        zoom: new NumberField(0, { optional: true }),
+      }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      view: new ViewField(),
+    }
+  }
+
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    validateViewState(props.viewState)
+    return { view: new OrthographicView({ id: this.id, ...props }) }
   }
 }
 
@@ -5376,6 +5409,7 @@ export const opTypes = {
   NetworkOp,
   NumberOp,
   OrbitViewOp,
+  OrthographicViewOp,
   OutOp,
   PathLayerOp,
   PathStyleExtensionOp,
