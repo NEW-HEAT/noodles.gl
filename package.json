@@ -5,16 +5,19 @@
   "scripts": {
     "install:website": "(cd website && yarn install)",
     "install:app": "(cd noodles-editor && yarn install)",
-    "install:all": "yarn install:website && yarn install:app",
+    "install:core": "(cd noodles-core && yarn install)",
+    "install:all": "yarn install:website && yarn install:app && yarn install:core",
     "build:app": "(cd noodles-editor && yarn build)",
     "build:app:cloudflare": "(cd noodles-editor && yarn generate:context && VITE_USE_CDN_DUCKDB=true yarn build)",
     "build:website": "(cd website && yarn build)",
-    "build:all": "yarn build:app && yarn build:website && mkdir -p website/build/app && cp -r noodles-editor/dist/* website/build/app/",
-    "build:all:cloudflare": "yarn build:website && yarn build:app:cloudflare && mkdir -p website/build/app && cp -r noodles-editor/dist/* website/build/app/",
+    "build:core": "(cd noodles-core && yarn build)",
+    "build:all": "yarn build:core && yarn build:app && yarn build:website && mkdir -p website/build/app && cp -r noodles-editor/dist/* website/build/app/",
+    "build:all:cloudflare": "yarn build:core && yarn build:website && yarn build:app:cloudflare && mkdir -p website/build/app && cp -r noodles-editor/dist/* website/build/app/",
     "start:website": "(cd website && yarn start)",
     "start:app": "(cd noodles-editor && yarn start)",
     "serve:website": "(cd website && yarn serve)",
-    "serve:app": "(cd noodles-editor && yarn serve)"
+    "serve:app": "(cd noodles-editor && yarn serve)",
+    "test:core": "(cd noodles-core && yarn test)"
   },
   "packageManager": "yarn@4.5.3"
 }
