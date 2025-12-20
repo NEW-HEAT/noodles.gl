@@ -94,7 +94,7 @@ export class NoodlesGL {
   /**
    * Get output data from an operator
    */
-  getData(operatorId: string): unknown {
+  getData(_operatorId: string): unknown {
     // This will be implemented to read from the operator store
     return null
   }
