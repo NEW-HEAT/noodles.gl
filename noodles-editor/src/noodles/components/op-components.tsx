@@ -28,12 +28,14 @@ import { createPortal } from 'react-dom'
 import { Temporal } from 'temporal-polyfill'
 
 import { analytics } from '../../utils/analytics'
+import { useKeysStore } from '../keys-store'
 import { SheetContext } from '../../utils/sheet-context'
 import { ArrayField, type Field, type IField, ListField } from '../fields'
 import s from '../noodles.module.css'
 import type { ExecutionState, IOperator, OpType } from '../operators'
 import {
   type ContainerOp,
+  type DirectionsOp,
   type GeocoderOp,
   type MouseOp,
   mathOpDescriptions,
@@ -95,6 +97,7 @@ for (const key of Object.keys(opTypes)) {
 export const nodeComponents = {
   ...defaultNodeComponents,
   GeocoderOp: GeocoderOpComponent,
+  DirectionsOp: DirectionsOpComponent,
   MouseOp: MouseOpComponent,
   TableEditorOp: TableEditorOpComponent,
   TimeOp: TimeOpComponent,
@@ -663,26 +666,49 @@ function GeocoderOpComponent({
 
   const containerRef = useRef<HTMLDivElement>(null)
   const geocoderRef = useRef<MapboxGeocoder>()
+  const [error, setError] = useState<string | null>(null)
+
+  // Get API key directly from store (reactive)
+  const apiKey = useKeysStore(state => state.getKey('mapbox'))
 
   useLayoutEffect(() => {
-    if (!containerRef.current) return
+    // Clear previous error
+    setError(null)
+
+    if (!containerRef.current) {
+      return
+    }
+
+    // Check if Mapbox API key is available
+    if (!apiKey) {
+      setError('API key required (Settings > API Keys)')
+      return
+    }
+
     const container = containerRef.current
 
-    const g = new MapboxGeocoder({
-      accessToken: MAPBOX_ACCESS_TOKEN,
-      collapsed: true,
-    })
+    let g: MapboxGeocoder
+    try {
+      g = new MapboxGeocoder({
+        accessToken: apiKey,
+        collapsed: true,
+      })
 
-    g.on('query', e => {
-      op.inputs.query.setValue(e.query)
-    })
+      g.on('query', (e: { query: string }) => {
+        op.inputs.query.setValue(e.query)
+      })
 
-    g.on('result', e => {
-      const [lng, lat] = e.result.geometry.coordinates as [number, number]
-      op.outputs.location.next({ lng, lat })
-    })
+      g.on('result', (e: { result: { geometry: { coordinates: [number, number] } } }) => {
+        const [lng, lat] = e.result.geometry.coordinates as [number, number]
+        op.outputs.location.next({ lng, lat })
+      })
 
-    g.addTo(container)
+      g.addTo(container)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid token'
+      setError(`Geocoder error: ${message}`)
+      return
+    }
 
     g.query(op.inputs.query.value)
 
@@ -700,8 +726,9 @@ function GeocoderOpComponent({
     return () => {
       removed = true
       g.onRemove()
+      geocoderRef.current = undefined
     }
-  }, [op])
+  }, [op, apiKey])
 
   const locked = useLocked(op)
   useEffect(() => {
@@ -725,7 +752,12 @@ function GeocoderOpComponent({
             renderInput={false}
           />
         ))}
-        <div ref={containerRef} className={s.fieldWrapper} />
+        {error && (
+          <div className={s.fieldWrapper} style={{ padding: '8px', color: '#ff6b6b' }}>
+            ⚠️ {error}
+          </div>
+        )}
+        <div ref={containerRef} className={s.fieldWrapper} style={{ display: error ? 'none' : 'block' }} />
         <div className={s.outputHandleContainer}>
           {Object.entries(op.outputs).map(([key, field]) => (
             <OutputHandle key={key} id={key} field={field} />
@@ -734,6 +766,42 @@ function GeocoderOpComponent({
       </div>
     </>
   )
+}
+
+function DirectionsOpComponent({
+  id,
+  type,
+}: ReactFlowNodeProps<NodeDataJSON<DirectionsOp>> & { type: 'DirectionsOp' }) {
+  const op = getOp(id as string)
+  if (!op) {
+    throw new Error(`Operator with id ${id} not found`)
+  }
+
+  // Reactive - automatically updates when keys change
+  const hasMapboxKey = useKeysStore(state => state.hasKey('mapbox'))
+  const hasGoogleMapsKey = useKeysStore(state => state.hasKey('googleMaps'))
+
+  // Track previous values to detect additions
+  const prevHasMapboxKey = useRef(hasMapboxKey)
+  const prevHasGoogleMapsKey = useRef(hasGoogleMapsKey)
+
+  useEffect(() => {
+    const mapboxKeyAdded = !prevHasMapboxKey.current && hasMapboxKey
+    const googleMapsKeyAdded = !prevHasGoogleMapsKey.current && hasGoogleMapsKey
+
+    if (mapboxKeyAdded || googleMapsKeyAdded) {
+      // Trigger re-execution by touching one of the input fields
+      // This will invalidate the memoization cache and cause the operator to re-execute
+      const currentOrigin = op.inputs.origin.value
+      op.inputs.origin.setValue(currentOrigin)
+    }
+
+    // Update refs for next check
+    prevHasMapboxKey.current = hasMapboxKey
+    prevHasGoogleMapsKey.current = hasGoogleMapsKey
+  }, [op, hasMapboxKey, hasGoogleMapsKey])
+
+  return <NodeComponent id={id} type={type} />
 }
 
 function MouseOpComponent({
