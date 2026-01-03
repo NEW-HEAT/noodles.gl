@@ -62,8 +62,14 @@ export function createVisualizationRenderer(
   options: VisualizationRendererOptions = {}
 ): VisualizationRenderer {
   const canvas = options.canvas ?? document.createElement('canvas')
-  canvas.width = options.width ?? 1920
-  canvas.height = options.height ?? 1080
+  
+  // Only set dimensions if not using a custom canvas or if dimensions are explicitly provided
+  if (!options.canvas || options.width !== undefined) {
+    canvas.width = options.width ?? 1920
+  }
+  if (!options.canvas || options.height !== undefined) {
+    canvas.height = options.height ?? 1080
+  }
 
   return new VisualizationRenderer(canvas, options)
 }

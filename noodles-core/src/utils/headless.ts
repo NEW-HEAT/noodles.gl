@@ -90,7 +90,7 @@ export class HeadlessVisualization {
   /**
    * Update data for a specific operator
    */
-  setData(operatorId: string, data: unknown): void {
+  setData(_operatorId: string, _data: unknown): void {
     // This will update the operator's data
   }
 
@@ -104,7 +104,7 @@ export class HeadlessVisualization {
   /**
    * Seek to a specific time
    */
-  seekTo(time: number): void {
+  seekTo(_time: number): void {
     // Update timeline position
   }
 
