@@ -89,7 +89,7 @@ export function Layout({
       >
         <i className={sidebarVisible ? 'pi pi-chevron-left' : 'pi pi-chevron-right'} />
       </button>
-      <div style={{ gridArea: 'right-widget', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div className={s.rightWidgetWrapper}>
         <TheatrePropPanel width={propPanelWidth} height={propPanelHeight} />
         <div style={{ flex: 1, minHeight: 0 }}>{right}</div>
       </div>

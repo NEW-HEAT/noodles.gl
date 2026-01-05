@@ -45,7 +45,6 @@ import type { Visualization } from '../visualizations'
 import { BlockLibrary, type BlockLibraryRef } from './components/block-library'
 import { categories, nodeTypeToDisplayName } from './components/categories'
 import { CopyControls, type CopyControlsRef } from './components/copy-controls'
-import { DropTarget } from './components/drop-target'
 import { ErrorBoundary } from './components/error-boundary'
 import { PropertyPanel } from './components/node-properties'
 import { NodeTreeSidebar } from './components/node-tree-sidebar'
@@ -1164,7 +1163,6 @@ export function getNoodles(): Visualization {
   const propertiesPanel = (
     <div className={s.rightPanel}>
       <PropertyPanel />
-      <DropTarget />
     </div>
   )
 
@@ -1187,6 +1185,7 @@ export function getNoodles(): Visualization {
     onOpenAddNode,
     undoRedoRef,
     copyControlsRef,
+    reactFlowRef,
     showChatPanel,
     setShowChatPanel,
     hasUnsavedChanges,
