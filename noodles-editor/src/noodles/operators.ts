@@ -1223,22 +1223,141 @@ export class BezierCurveOp extends Operator<BezierCurveOp> {
 
 export class FileOp extends Operator<FileOp> {
   static displayName = 'File'
-  static description = 'Fetch a file from a URL or text. Supports csv and json'
+  static description = 'Fetch a file from a URL or text. Supports csv, json, text, and binary formats'
   asDownload = () => this.outputData
+
   createInputs() {
     return {
-      format: new StringLiteralField('json', { values: ['json', 'csv'] }),
+      format: new StringLiteralField('json', { values: ['json', 'csv', 'text', 'binary'] }),
       url: new FileField(),
       text: new StringField(),
       autoType: new BooleanField(true), // TODO: Make this only available for csv
       pulse: new NumberField(0, { min: 0, step: 1 }),
     }
   }
+
   createOutputs() {
     return {
       data: new DataField(),
     }
   }
+
+  // Helper method to read from project assets
+  private async readFromProjectAsset(
+    url: string,
+    binary: boolean = false
+  ): Promise<string | ArrayBuffer | null> {
+    if (!url?.startsWith(projectScheme)) {
+      return null
+    }
+
+    // Lazy imports to avoid circular dependency
+    const { readAsset, readAssetBinary } = await import('./storage')
+    const { useFileSystemStore } = await import('./filesystem-store')
+
+    // Get current project and storage type
+    const { currentProjectName, activeStorageType } = useFileSystemStore.getState()
+    if (!currentProjectName) {
+      throw new Error('No project loaded. Please save or load a project first.')
+    }
+
+    const fileName = url.substring(projectScheme.length)
+
+    // Use appropriate read function based on binary flag
+    if (binary) {
+      const result = await readAssetBinary(activeStorageType, currentProjectName, fileName)
+      if (!result.success) {
+        throw new Error(result.error.message)
+      }
+      return result.data
+    } else {
+      const result = await readAsset(activeStorageType, currentProjectName, fileName)
+      if (!result.success) {
+        throw new Error(result.error.message)
+      }
+      return result.data
+    }
+  }
+
+  // Helper method to fetch from URL
+  private async fetchFromUrl(
+    url: string,
+    format: 'json' | 'csv' | 'text' | 'binary'
+  ): Promise<any> {
+    if (format === 'csv') {
+      const parseFn = this.inputs.autoType.value ? d3.autoType : null
+      return await csv(url, parseFn)
+    }
+
+    const resp = await fetch(url)
+
+    switch (format) {
+      case 'json':
+        return await resp.json()
+      case 'text':
+        return await resp.text()
+      case 'binary':
+        return await resp.arrayBuffer()
+      default:
+        throw new Error(`Unsupported format: ${format}`)
+    }
+  }
+
+  // Helper method to process data based on format
+  private processData(
+    data: string | ArrayBuffer | DSVRowArray<string> | any,
+    format: string,
+    autoType: boolean
+  ): ExtractProps<typeof this.outputs> {
+    if (format === 'csv' && typeof data === 'string') {
+      const parseFn = autoType ? d3.autoType : null
+      return { data: csvParse(data, parseFn) }
+    }
+    if (format === 'json' && typeof data === 'string') {
+      return { data: JSON.parse(data) }
+    }
+    return { data }
+  }
+
+  // Helper method to process text input
+  private processText(
+    text: string,
+    format: string,
+    autoType: boolean
+  ): ExtractProps<typeof this.outputs> {
+    switch (format) {
+      case 'csv':
+        const parseFn = autoType ? d3.autoType : null
+        return { data: csvParse(text, parseFn) }
+      case 'json':
+        return { data: JSON.parse(text) }
+      case 'text':
+        return { data: text }
+      case 'binary':
+        // Convert text to Uint8Array for binary format
+        const encoder = new TextEncoder()
+        return { data: encoder.encode(text) }
+      default:
+        throw new Error(`Unsupported format: ${format}`)
+    }
+  }
+
+  // Helper method to get empty result based on format
+  private getEmptyResult(format: string): ExtractProps<typeof this.outputs> {
+    switch (format) {
+      case 'csv':
+        return { data: [] }
+      case 'json':
+        return { data: {} }
+      case 'text':
+        return { data: '' }
+      case 'binary':
+        return { data: new Uint8Array() }
+      default:
+        return { data: null }
+    }
+  }
+
   async execute({
     format,
     url,
@@ -1246,58 +1365,25 @@ export class FileOp extends Operator<FileOp> {
     autoType,
   }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     try {
-      if (format === 'csv') {
-        let data: DSVRowArray<string> = []
-        const parseFn = autoType ? d3.autoType : null
-        if (url?.startsWith(projectScheme)) {
-          // Lazy imports to avoid circular dependency
-          const { readAsset } = await import('./storage')
-          const { useFileSystemStore } = await import('./filesystem-store')
-
-          // Use new readAsset function with current project and storage type
-          const { currentProjectName, activeStorageType } = useFileSystemStore.getState()
-          if (!currentProjectName) {
-            throw new Error('No project loaded. Please save or load a project first.')
-          }
-          const fileName = url.substring(projectScheme.length)
-          const result = await readAsset(activeStorageType, currentProjectName, fileName)
-          if (!result.success) {
-            throw new Error(result.error.message)
-          }
-          data = csvParse(result.data, parseFn)
-        } else if (url) {
-          data = await csv(url, parseFn)
-        } else if (text) {
-          data = csvParse(text, parseFn)
+      // Try reading from project asset first
+      if (url) {
+        const assetData = await this.readFromProjectAsset(url, format === 'binary')
+        if (assetData !== null) {
+          return this.processData(assetData, format, autoType)
         }
-        return { data }
-      }
-      if (format === 'json') {
-        let data = {}
-        if (url?.startsWith(projectScheme)) {
-          // Lazy imports to avoid circular dependency
-          const { readAsset } = await import('./storage')
-          const { useFileSystemStore } = await import('./filesystem-store')
 
-          // Use new readAsset function with current project and storage type
-          const { currentProjectName, activeStorageType } = useFileSystemStore.getState()
-          if (!currentProjectName) {
-            throw new Error('No project loaded. Please save or load a project first.')
-          }
-          const fileName = url.substring(projectScheme.length)
-          const result = await readAsset(activeStorageType, currentProjectName, fileName)
-          if (!result.success) {
-            throw new Error(result.error.message)
-          }
-          data = JSON.parse(result.data)
-        } else if (url) {
-          const resp = await fetch(url)
-          data = await resp.json()
-        } else if (text) {
-          data = JSON.parse(text)
-        }
-        return { data }
+        // Not a project asset, fetch from URL
+        const data = await this.fetchFromUrl(url, format as 'json' | 'csv' | 'text' | 'binary')
+        return this.processData(data, format, autoType)
       }
+
+      // Handle text input
+      if (text) {
+        return this.processText(text, format, autoType)
+      }
+
+      // No input provided, return empty result
+      return this.getEmptyResult(format)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       throw new Error(`Unable to read file "${url}": ${errorMessage}`)
