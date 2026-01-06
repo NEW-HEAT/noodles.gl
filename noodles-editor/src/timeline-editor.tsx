@@ -9,12 +9,14 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import ReactMapGL, { type MapProps, useControl } from 'react-map-gl/maplibre'
 import { Layout } from './layout'
 import { getNoodles } from './noodles/noodles'
+import { SimpleModeControls } from './noodles/components/simple-mode-controls'
 import { TopMenuBar } from './noodles/components/top-menu-bar'
-import { setSheetObject, deleteSheetObject } from './noodles/store'
+import { setSheetObject, deleteSheetObject, useUIStore } from './noodles/store'
 import { useDeckDrawLoop } from './render/draw-loop'
 import { captureScreenshot, rafDriver, useRenderer } from './render/renderer'
 import { TransformScale } from './render/transform-scale'
 import s from './timeline-editor.module.css'
+import { analytics } from './utils/analytics'
 import setRef from './utils/set-ref'
 import useSheetValue, { type PropsValue } from './utils/use-sheet-value'
 
@@ -134,6 +136,9 @@ const DeckGLOverlay = forwardRef<
 const isMapReady = (map: MapLibre | null) => !map || (map.isStyleLoaded() && map.areTilesLoaded())
 
 export default function TimelineEditor() {
+  // Simple mode state - must be at the top to maintain hook order
+  const simpleMode = useUIStore(state => state.simpleMode)
+
   const [ready, setReady] = useState(false)
 
   const mapRef = useRef<MapLibre | null>(null)
@@ -415,6 +420,57 @@ export default function TimelineEditor() {
     />
   )
 
+  // Render visualization content - this should stay stable in the React tree
+  const visualizationContent = isFixedMode ? (
+    <TransformScale scale={renderer.scaleControl}>{renderContent()}</TransformScale>
+  ) : (
+    renderContent()
+  )
+
+  // Simple mode floating button to exit
+  const simpleModeExitButton = simpleMode && (
+    <button
+      type="button"
+      onClick={() => {
+        useUIStore.getState().setSimpleMode(false)
+        analytics.track('toggle_simple_mode', { enabled: false })
+      }}
+      style={{
+        position: 'fixed',
+        top: '16px',
+        right: '16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '8px 14px',
+        background: 'rgba(0, 0, 0, 0.7)',
+        backdropFilter: 'blur(10px)',
+        border: '1px solid rgba(255, 255, 255, 0.2)',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontSize: '13px',
+        color: 'white',
+        transition: 'all 0.2s',
+        zIndex: 10000,
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.background = 'rgba(0, 0, 0, 0.85)'
+        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = 'rgba(0, 0, 0, 0.7)'
+        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)'
+      }}
+      title="Show Full Editor"
+    >
+      <i className="pi pi-window-maximize" />
+      Full Editor
+    </button>
+  )
+
+  // Always render with ReactFlowProvider and Layout to keep DeckGL mounted at the same position
+  // This prevents WebGL context loss when switching between simple and full editor modes
+  // In simple mode, we pass null/empty for UI elements to hide them
   return (
     <>
       {isRendering && (
@@ -428,19 +484,19 @@ export default function TimelineEditor() {
           />
         </div>
       )}
+      {simpleModeExitButton}
       <ReactFlowProvider>
+        {/* SimpleModeControls must be inside ReactFlowProvider to access addNodes/addEdges */}
+        {simpleMode && <SimpleModeControls />}
         <Layout
           top={topBar}
           left={nodeSidebar}
           right={propertiesPanel}
           flowGraph={flowGraph}
           layoutMode={layoutMode}
+          simpleMode={simpleMode}
         >
-          {isFixedMode ? (
-            <TransformScale scale={renderer.scaleControl}>{renderContent()}</TransformScale>
-          ) : (
-            renderContent()
-          )}
+          {visualizationContent}
         </Layout>
       </ReactFlowProvider>
     </>

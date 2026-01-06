@@ -7,13 +7,34 @@ import logoSvg from '/noodles-favicon.svg'
 import { SettingsDialog } from '../../components/settings-dialog'
 import { analytics } from '../../utils/analytics'
 import { ContainerOp } from '../operators'
-import { getOpStore, useNestingStore } from '../store'
+import { getOpStore, useNestingStore, useUIStore } from '../store'
 import { directoryHandleCache } from '../utils/directory-handle-cache'
 import { getParentPath, splitPath } from '../utils/path-utils'
 import { Breadcrumbs } from './breadcrumbs'
 import type { CopyControlsRef } from './copy-controls'
 import s from './top-menu-bar.module.css'
 import type { UndoRedoHandlerRef } from './UndoRedoHandler'
+
+/** Simple Mode Toggle Button */
+function SimpleModeToggle() {
+  const simpleMode = useUIStore(state => state.simpleMode)
+  const setSimpleMode = useUIStore(state => state.setSimpleMode)
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setSimpleMode(!simpleMode)
+        analytics.track('toggle_simple_mode', { enabled: !simpleMode })
+      }}
+      className={s.assistantButton}
+      title={simpleMode ? 'Show Full Editor' : 'Show Simple Mode'}
+    >
+      <i className={simpleMode ? 'pi pi-window-maximize' : 'pi pi-window-minimize'} />
+      {simpleMode ? 'Full Editor' : 'Simple'}
+    </button>
+  )
+}
 
 interface TopMenuBarProps {
   projectName?: string
@@ -494,6 +515,7 @@ export function TopMenuBar({
         </div>
 
         <div className={s.rightSection}>
+          <SimpleModeToggle />
           {setShowChatPanel && (
             <button
               type="button"

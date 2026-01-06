@@ -21,6 +21,7 @@ export function Layout({
   flowGraph,
   children,
   layoutMode = 'split',
+  simpleMode = false,
 }: PropsWithChildren<{
   top?: React.ReactNode
   bottom?: React.ReactNode
@@ -28,6 +29,7 @@ export function Layout({
   right?: React.ReactNode
   flowGraph?: React.ReactNode
   layoutMode?: 'split' | 'noodles-on-top' | 'output-on-top'
+  simpleMode?: boolean
 }>) {
   const [propPanelHeight, setPropPanelHeight] = useState(150)
   const [propPanelWidth, setPropPanelWidth] = useState(280)
@@ -73,11 +75,15 @@ export function Layout({
 
   const setSidebarVisible = useUIStore(state => state.setSidebarVisible)
 
+  // In simple mode, use CSS to hide UI elements while keeping the tree structure identical
+  // This prevents unmounting of DeckGL which would cause WebGL context loss
+  const hiddenStyle = simpleMode ? { display: 'none' } : {}
+
   return (
-    <div className={cx(s.layout, layoutClass)}>
-      <div style={{ gridArea: 'top-bar' }}>{top}</div>
+    <div className={cx(s.layout, layoutClass, { [s.simpleMode]: simpleMode })}>
+      <div style={{ gridArea: 'top-bar', ...hiddenStyle }}>{top}</div>
       {sidebarVisible && (
-        <div className={s.sidebarContainer} style={{ gridArea: 'left-widget', minHeight: 0 }}>
+        <div className={s.sidebarContainer} style={{ gridArea: 'left-widget', minHeight: 0, ...hiddenStyle }}>
           {left}
         </div>
       )}
@@ -86,17 +92,18 @@ export function Layout({
         onClick={() => setSidebarVisible(!sidebarVisible)}
         className={cx(s.sidebarToggle, { [s.sidebarToggleCollapsed]: !sidebarVisible })}
         title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+        style={hiddenStyle}
       >
         <i className={sidebarVisible ? 'pi pi-chevron-left' : 'pi pi-chevron-right'} />
       </button>
-      <div style={{ gridArea: 'right-widget', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ gridArea: 'right-widget', display: 'flex', flexDirection: 'column', minHeight: 0, ...hiddenStyle }}>
         <TheatrePropPanel width={propPanelWidth} height={propPanelHeight} />
         <div style={{ flex: 1, minHeight: 0 }}>{right}</div>
       </div>
-      <div style={{ gridArea: 'bottom-widget' }}>{bottom}</div>
+      <div style={{ gridArea: 'bottom-widget', ...hiddenStyle }}>{bottom}</div>
       <div className={cx(s.fillWidget, layoutClass)}>
         <div className={s.outputArea}>{children}</div>
-        <div className={s.noodlesArea}>{flowGraph}</div>
+        <div className={s.noodlesArea} style={hiddenStyle}>{flowGraph}</div>
       </div>
     </div>
   )

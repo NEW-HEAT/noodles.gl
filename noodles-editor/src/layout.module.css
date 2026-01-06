@@ -118,3 +118,17 @@
 .fillWidget.layoutOutputOnTop .outputArea > * {
   pointer-events: auto;
 }
+
+/* Simple mode: visualization fills entire viewport */
+.layout.simpleMode {
+  grid-template-areas: "fill-widget";
+  grid-template-rows: 1fr;
+  grid-template-columns: 1fr;
+}
+
+.simpleMode .fillWidget .outputArea {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}

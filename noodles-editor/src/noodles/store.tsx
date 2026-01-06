@@ -102,6 +102,8 @@ interface UIStoreState {
   setHoveredOutputHandle: (handle: { nodeId: string; handleId: string } | null) => void
   sidebarVisible: boolean
   setSidebarVisible: (visible: boolean) => void
+  simpleMode: boolean
+  setSimpleMode: (enabled: boolean) => void
 }
 
 export const useUIStore = create<UIStoreState>(set => ({
@@ -109,6 +111,8 @@ export const useUIStore = create<UIStoreState>(set => ({
   setHoveredOutputHandle: handle => set({ hoveredOutputHandle: handle }),
   sidebarVisible: true,
   setSidebarVisible: visible => set({ sidebarVisible: visible }),
+  simpleMode: false,
+  setSimpleMode: enabled => set({ simpleMode: enabled }),
 }))
 
 // ============================================================================

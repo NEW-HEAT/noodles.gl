@@ -15,6 +15,12 @@
   min-width: 0;
 }
 
+.rightSection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .logoButton {
   display: flex;
   align-items: center;
