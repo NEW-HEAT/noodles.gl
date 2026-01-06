@@ -1,9 +1,9 @@
 import { useReactFlow } from '@xyflow/react'
 import { useCallback } from 'react'
 import { analytics } from '../../../utils/analytics'
+import type { OpType } from '../../operators'
 import { useNestingStore } from '../../store'
 import type { NodeJSON } from '../../transform-graph'
-import type { OpType } from '../../operators'
 import { nodeId } from '../../utils/id-utils'
 import { GeocodingDialog } from '../geocoding-dialog'
 
@@ -15,7 +15,7 @@ interface PointWizardToolProps {
 
 export function PointWizardTool({ open, onOpenChange, reactFlowRef }: PointWizardToolProps) {
   const { addNodes, screenToFlowPosition } = useReactFlow()
-  const currentContainerId = useNestingStore((state) => state.currentContainerId)
+  const currentContainerId = useNestingStore(state => state.currentContainerId)
 
   const handleLocationSelected = useCallback(
     ({ longitude, latitude }: { longitude: number; latitude: number }) => {

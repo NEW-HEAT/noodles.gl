@@ -8,9 +8,9 @@ import type { Map as MapLibre } from 'maplibre-gl'
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMapGL, { type MapProps, useControl } from 'react-map-gl/maplibre'
 import { Layout } from './layout'
-import { getNoodles } from './noodles/noodles'
 import { TopMenuBar } from './noodles/components/top-menu-bar'
-import { setSheetObject, deleteSheetObject } from './noodles/store'
+import { getNoodles } from './noodles/noodles'
+import { deleteSheetObject, setSheetObject } from './noodles/store'
 import { useDeckDrawLoop } from './render/draw-loop'
 import { captureScreenshot, rafDriver, useRenderer } from './render/renderer'
 import { TransformScale } from './render/transform-scale'
@@ -150,15 +150,8 @@ export default function TimelineEditor() {
   }, [])
 
   const noodles = getNoodles()
-  const {
-    project,
-    sheet,
-    flowGraph,
-    nodeSidebar,
-    propertiesPanel,
-    layoutMode,
-    ...visualization
-  } = noodles
+  const { project, sheet, flowGraph, nodeSidebar, propertiesPanel, layoutMode, ...visualization } =
+    noodles
   const sequence = sheet.sequence
 
   useEffect(() => {

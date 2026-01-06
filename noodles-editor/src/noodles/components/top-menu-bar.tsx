@@ -12,10 +12,10 @@ import { directoryHandleCache } from '../utils/directory-handle-cache'
 import { getParentPath, splitPath } from '../utils/path-utils'
 import { Breadcrumbs } from './breadcrumbs'
 import type { CopyControlsRef } from './copy-controls'
+import { DataImporterTool } from './tools/data-importer-tool'
+import { PointWizardTool } from './tools/point-wizard-tool'
 import s from './top-menu-bar.module.css'
 import type { UndoRedoHandlerRef } from './UndoRedoHandler'
-import { PointWizardTool } from './tools/point-wizard-tool'
-import { DataImporterTool } from './tools/data-importer-tool'
 
 interface TopMenuBarProps {
   projectName?: string
@@ -390,13 +390,12 @@ export function TopMenuBar({
                             <DropdownMenu.RadioGroup
                               value={layoutMode}
                               onValueChange={value =>
-                                setLayoutMode?.(value as 'split' | 'noodles-on-top' | 'output-on-top')
+                                setLayoutMode?.(
+                                  value as 'split' | 'noodles-on-top' | 'output-on-top'
+                                )
                               }
                             >
-                              <DropdownMenu.RadioItem
-                                className={s.dropdownItem}
-                                value="split"
-                              >
+                              <DropdownMenu.RadioItem className={s.dropdownItem} value="split">
                                 <DropdownMenu.ItemIndicator className={s.itemIndicator}>
                                   <i className="pi pi-check" style={{ fontSize: '12px' }} />
                                 </DropdownMenu.ItemIndicator>
