@@ -6,6 +6,29 @@ import { ContainerOp, ForLoopEndOp, GraphInputOp, opTypes } from './operators'
 import { getOpStore } from './store'
 import { memoize } from './utils/memoize'
 import { getParentPath, isDirectChild, parseHandleId } from './utils/path-utils'
+import {
+  updateGraph,
+  type ComputeState,
+  type ComputeResult,
+  type Edge as ExecutorEdge,
+} from './graph-executor'
+
+// Re-export GraphExecutor and related types for use elsewhere
+export {
+  GraphExecutor,
+  GraphScope,
+  type ComputeState,
+  type ComputeResult,
+  initializeExecutor,
+  startExecutor,
+  stopExecutor,
+  getExecutor,
+  forceUpdate,
+  getPerformanceMetrics,
+  wouldCreateCycle,
+  getExecutionOrder,
+} from './graph-executor'
+import type { ExtractProps } from './utils/extract-props'
 
 // Local type definitions for ReactFlow node data using Operator class constraint
 // Simplified to avoid complex type resolution that causes memory issues
@@ -105,6 +128,9 @@ export function transformGraph<
     op.createListeners()
   }
 
+  // Update dependency graph
+  updateGraph(edges as unknown as ExecutorEdge[])
+
   // Remove any connections that are not in the edges array
   for (const op of instances) {
     for (const [_key, field] of Object.entries(op.inputs)) {
@@ -155,6 +181,10 @@ export function transformGraph<
       const connectionType =
         (edge as Edge<OP, OP> & { type?: string }).type === 'ReferenceEdge' ? 'reference' : 'value'
       targetField.addConnection(edge.id, sourceField, connectionType)
+
+      // Update operator dependencies for pull-based execution
+      sourceOp.addDownstreamDependent(targetOp)
+      targetOp.addUpstreamDependency(sourceOp)
     }
   }
 
@@ -207,4 +237,86 @@ export function transformGraph<
   }
 
   return instances
+}
+
+// External compute function that operates on operators
+// This replaces the need for a compute() method on Operator class
+export async function compute(
+  operators: Operator<IOperator>[],
+  state: ComputeState
+): Promise<Map<string, ComputeResult>> {
+  const results = new Map<string, ComputeResult>()
+
+  // Sort operators topologically using edges from connections
+  const edges: Array<{ source: string; target: string }> = []
+
+  // Extract edges from operator connections
+  for (const op of operators) {
+    for (const [_, field] of Object.entries(op.inputs)) {
+      const connections = field.getConnections()
+      for (const connection of connections) {
+        if (connection.sourceOp) {
+          edges.push({
+            source: connection.sourceOp.id,
+            target: op.id
+          })
+        }
+      }
+    }
+  }
+
+  // Build node map for topological sort
+  const nodeMap = new Map(operators.map(op => [op.id, op]))
+
+  // Use existing topological sort (convert to work with operators)
+  const nodes = operators.map(op => ({
+    id: op.id,
+    type: (op.constructor as any).displayName || 'Unknown',
+    data: {}
+  })) as NodeJSON<OpType>[]
+
+  const sortedNodes = topologicalSort(nodes, edges as any)
+
+  // Execute each operator in sorted order
+  for (const node of sortedNodes) {
+    const op = nodeMap.get(node.id)
+    if (!op || !op.dirty) continue
+
+    try {
+      // Get input values
+      const inputs: Record<string, unknown> = {}
+      for (const [key, field] of Object.entries(op.inputs)) {
+        inputs[key] = field.value
+      }
+
+      // Execute the operator
+      const output = op.execute(inputs as ExtractProps<typeof op.inputs>)
+      const finalOutput = output instanceof Promise ? await output : output
+
+      // Update output fields
+      if (finalOutput) {
+        for (const [key, value] of Object.entries(finalOutput)) {
+          if (key in op.outputs) {
+            ;(op.outputs as any)[key].setValue(value)
+          }
+        }
+      }
+
+      results.set(node.id, {
+        value: finalOutput,
+        changed: true
+      })
+
+      // Clear dirty flag
+      op.dirty = false
+    } catch (error) {
+      results.set(node.id, {
+        value: null,
+        changed: false,
+        error: error instanceof Error ? error : new Error(String(error))
+      })
+    }
+  }
+
+  return results
 }

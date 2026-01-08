@@ -181,6 +181,9 @@ export abstract class Field<
     })
     if (parsed.success) {
       this.next(parsed.data)
+
+      // Mark the owning operator as dirty
+      this.op?.markDirty()
     } else {
       console.warn('Parse error', parsed.error.issues)
       // console.trace()
@@ -201,6 +204,8 @@ export abstract class Field<
         this.setValue(value)
       } else {
         this.next(this.value)
+        // For reference connections, also mark dirty
+        this.op?.markDirty()
       }
     })
     this.subscriptions.set(id, subscription)

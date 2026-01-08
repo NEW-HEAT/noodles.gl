@@ -194,6 +194,14 @@ export interface IOperator {
   createOutputs(): Record<string, Field<z.ZodType>>
 }
 
+// Pull-based execution status
+export enum PullExecutionStatus {
+  CLEAN = 'clean', // Valid cached output
+  DIRTY = 'dirty', // Needs re-execution
+  COMPUTING = 'computing', // Currently executing
+  ERROR = 'error', // Execution failed
+}
+
 // An Operator is a collection of Fields, and a transform function responsible
 // for taking in a set of input fields and mapping them to the output.
 export abstract class Operator<OP extends IOperator> {
@@ -226,6 +234,20 @@ export abstract class Operator<OP extends IOperator> {
 
   // Execution state for visual debugging
   executionState = new BehaviorSubject<ExecutionState>({ status: 'idle' })
+
+  // Dirty flag for GraphExecutor
+  dirty: boolean = true
+
+  // === Pull-based execution additions ===
+  // Execution status for pull-based model
+  private _pullExecutionStatus: PullExecutionStatus = PullExecutionStatus.DIRTY
+  private _cachedOutput: ExtractProps<(typeof this)['outputs']> | null = null
+  private _lastExecutionTime: number = 0
+  private _computingPromise: Promise<ExtractProps<(typeof this)['outputs']>> | null = null
+
+  // Dependency tracking for pull-based model
+  private _upstreamDependencies: Set<Operator<IOperator>> = new Set()
+  private _downstreamDependents: Set<Operator<IOperator>> = new Set()
 
   constructor(
     public id: OpId,
@@ -294,6 +316,164 @@ export abstract class Operator<OP extends IOperator> {
   // Left open for sub-classes to override
   onError(_err: unknown) {}
 
+  // === Pull-based execution methods ===
+
+  // Pull data from this operator, executing if needed (pull-based model)
+  async pull(): Promise<ExtractProps<(typeof this)['outputs']>> {
+    // Return cached if clean
+    if (this._pullExecutionStatus === PullExecutionStatus.CLEAN && this._cachedOutput !== null) {
+      return this._cachedOutput
+    }
+
+    // Wait for ongoing computation
+    if (this._pullExecutionStatus === PullExecutionStatus.COMPUTING && this._computingPromise !== null) {
+      return this._computingPromise
+    }
+
+    // Handle error state
+    if (this._pullExecutionStatus === PullExecutionStatus.ERROR) {
+      throw new Error(`Operator ${this.id} is in error state`)
+    }
+
+    // Mark as computing
+    this._pullExecutionStatus = PullExecutionStatus.COMPUTING
+
+    // Create computation promise
+    this._computingPromise = this._pullExecution()
+
+    try {
+      const result = await this._computingPromise
+      return result
+    } finally {
+      this._computingPromise = null
+    }
+  }
+
+  // Internal pull execution logic
+  private async _pullExecution(): Promise<ExtractProps<(typeof this)['outputs']>> {
+    const startTime = performance.now()
+
+    try {
+      // Pull upstream dependencies first
+      await this._pullUpstreamDependencies()
+
+      // Get current input values
+      const inputValues = this.data
+
+      // Set executing state for UI
+      this.executionState.next({ status: 'executing' })
+
+      // Execute the operator
+      const result = this.execute(inputValues)
+      const finalResult = result instanceof Promise ? await result : result
+
+      if (finalResult === null) {
+        throw new Error(`Operator ${this.id} returned null`)
+      }
+
+      // Cache result and mark clean
+      this._cachedOutput = finalResult
+      this._pullExecutionStatus = PullExecutionStatus.CLEAN
+      this.dirty = false // Also clear the dirty flag for GraphExecutor
+      this._lastExecutionTime = performance.now() - startTime
+
+      // Update execution state for UI
+      this.executionState.next({
+        status: 'success',
+        lastExecuted: new Date(),
+        executionTime: this._lastExecutionTime,
+      })
+
+      // Update output fields for UI/debugging purposes only
+      // In pull mode, this is not for propagation but for inspection
+      for (const [key, field] of Object.entries(this.outputs)) {
+        if (field.value !== finalResult[key]) {
+          field.next(finalResult[key])
+        }
+      }
+
+      return finalResult
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      console.warn(
+        `Pull execution failure in [${this.id} (${(this.constructor as typeof Operator).displayName})]:`,
+        error.message
+      )
+
+      this._pullExecutionStatus = PullExecutionStatus.ERROR
+      this._cachedOutput = null
+
+      // Update execution state for UI
+      this.executionState.next({
+        status: 'error',
+        lastExecuted: new Date(),
+        executionTime: performance.now() - startTime,
+        error: error.message,
+      })
+
+      this.onError(error)
+      throw error
+    }
+  }
+
+  // Pull all upstream dependencies
+  private async _pullUpstreamDependencies(): Promise<void> {
+    const promises: Promise<unknown>[] = []
+
+    for (const dep of this._upstreamDependencies) {
+      promises.push(dep.pull())
+    }
+
+    await Promise.all(promises)
+    // Field connections will have updated the values already via subscriptions
+  }
+
+  // Mark this operator as dirty and propagate downstream
+  markDirty(): void {
+    if (this._pullExecutionStatus === PullExecutionStatus.DIRTY) {
+      return // Already dirty
+    }
+
+    this._pullExecutionStatus = PullExecutionStatus.DIRTY
+    this._cachedOutput = null
+    this.dirty = true // Also set the dirty flag for GraphExecutor
+
+    // Propagate dirty flag to downstream dependents
+    for (const dependent of this._downstreamDependents) {
+      dependent.markDirty()
+    }
+  }
+
+  // Add upstream dependency (for pull-based model)
+  addUpstreamDependency(op: Operator<IOperator>): void {
+    this._upstreamDependencies.add(op)
+  }
+
+  // Add downstream dependent (for pull-based model)
+  addDownstreamDependent(op: Operator<IOperator>): void {
+    this._downstreamDependents.add(op)
+  }
+
+  // Remove upstream dependency (for pull-based model)
+  removeUpstreamDependency(op: Operator<IOperator>): void {
+    this._upstreamDependencies.delete(op)
+  }
+
+  // Remove downstream dependent (for pull-based model)
+  removeDownstreamDependent(op: Operator<IOperator>): void {
+    this._downstreamDependents.delete(op)
+  }
+
+  // Get pull execution status
+  get pullExecutionStatus(): PullExecutionStatus {
+    return this._pullExecutionStatus
+  }
+
+  // Get cached output (for debugging)
+  get cachedOutput(): ExtractProps<(typeof this)['outputs']> | null {
+    return this._cachedOutput
+  }
+
   // Needs to be called after sub-classes have created their inputs and outputs
   createListeners() {
     const sub = combineLatest(this.inputs)
@@ -322,7 +502,7 @@ export abstract class Operator<OP extends IOperator> {
           } catch (err: unknown) {
             const error = err instanceof Error ? err : new Error(String(err))
             console.warn(
-              `Failure in [${this.id} (${this.constructor.displayName})]:`,
+              `Failure in [${this.id} (${(this.constructor as typeof Operator).displayName})]:`,
               error.message,
               error.stack
             )
@@ -334,7 +514,7 @@ export abstract class Operator<OP extends IOperator> {
               status: 'error',
               lastExecuted: new Date(),
               executionTime,
-              error: err.message,
+              error: error.message,
             })
 
             return null
@@ -1136,6 +1316,12 @@ export class TimeOp extends Operator<TimeOp> {
   private rafId?: number
   private theatreUnsub?: () => void
 
+  constructor(id: OpId, inputs?: unknown, locked?: boolean) {
+    super(id, inputs, locked)
+    // Initialize time updates after outputs are created
+    this.initializeTimeUpdates()
+  }
+
   createInputs() {
     return {}
   }
@@ -1148,8 +1334,7 @@ export class TimeOp extends Operator<TimeOp> {
     }
   }
 
-  // Override createListeners to set up our custom update mechanism
-  createListeners() {
+  private initializeTimeUpdates() {
     // Set up subscription from timeState$ to outputs
     const sub = this.timeState$.subscribe(state => {
       this.outputs.now.next(state.now)
@@ -2044,7 +2229,6 @@ export class SwitchOp extends Operator<SwitchOp> {
     'Select one value from a list using an index (0, 1, 2...). With blend enabled, smoothly interpolate between values for animation effects.'
   createInputs() {
     return {
-      // TODO: support arbitrary outputs, maybe a union type?
       values: new ListField(new DataField()),
       index: new NumberField(0, { min: 0, step: 1 }),
       blend: new BooleanField(false),
@@ -2102,24 +2286,33 @@ export class SwitchOp extends Operator<SwitchOp> {
   }
 }
 
-// This is a special control flow Operator that will loop over an array of data
-// We need a way to signal to the UI that this is a loop, and to render the loop
 export class ForLoopBeginOp extends Operator<ForLoopBeginOp> {
   static displayName = 'ForLoopBegin'
   static description =
-    'Start a loop that processes each item in an array one by one. Connect operators between ForLoopBegin and ForLoopEnd to transform each item. The ForLoopEnd collects all results.'
+    'Start a loop that processes each item in an array. The scope body is wrapped in a group node. Outputs are set by the executor during iteration.'
+
   createInputs() {
     return {
       data: new DataField(new ArrayField(new UnknownField())),
     }
   }
+
   createOutputs() {
     return {
       d: new DataField(new UnknownField()),
+      index: new NumberField(0), // Current iteration index
+      total: new NumberField(0), // Total number of items
     }
   }
+
   execute({ data }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    return { d: data }
+    // GraphExecutor sets these values during iteration
+    const arr = Array.isArray(data) ? data : []
+    return {
+      d: arr.length > 0 ? arr[0] : null,
+      index: 0,
+      total: arr.length,
+    }
   }
 }
 
@@ -2142,10 +2335,6 @@ export class ForLoopEndOp extends Operator<ForLoopEndOp> {
     return {
       data: new DataField(new ArrayField(new UnknownField())),
     }
-  }
-  // Override the default to handle the loop
-  createListeners() {
-    return
   }
 
   // This is a complicated operator that needs to keep track of the loop.
@@ -2215,6 +2404,47 @@ export class ForLoopEndOp extends Operator<ForLoopEndOp> {
   }
   execute({ d }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     return { data: d }
+  }
+}
+
+// ForLoopMetaOp provides accumulator for reduce-like operations within a ForLoop scope.
+// GraphExecutor is responsible for:
+// - Iterating over the data array
+// - Setting d/index/total on ForLoopBeginOp for each iteration
+// - Setting accumulator/index/total/isFirst/isLast on ForLoopMetaOp
+// - Collecting results from ForLoopEndOp across iterations
+
+export class ForLoopMetaOp extends Operator<ForLoopMetaOp> {
+  static displayName = 'ForLoopMeta'
+  static description =
+    'Access iteration metadata and accumulator within a ForLoop scope. Like Houdini iteration metadata.'
+
+  createInputs() {
+    return {
+      initialValue: new DataField(new UnknownField(), { description: 'Initial accumulator value' }),
+      currentValue: new DataField(new UnknownField(), { description: 'Value to pass to next iteration' }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      accumulator: new DataField(new UnknownField()),
+      index: new NumberField(0),
+      total: new NumberField(0),
+      isFirst: new BooleanField(false),
+      isLast: new BooleanField(false),
+    }
+  }
+
+  execute({ initialValue, currentValue }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    // GraphExecutor manages accumulator state across iterations
+    return {
+      accumulator: currentValue ?? initialValue,
+      index: 0,
+      total: 0,
+      isFirst: true,
+      isLast: true,
+    }
   }
 }
 
@@ -2460,6 +2690,12 @@ export class MouseOp extends Operator<MouseOp> {
   private mouseListener?: (e: MouseEvent) => void
   private containerElement?: Element
 
+  constructor(id: OpId, inputs?: unknown, locked?: boolean) {
+    super(id, inputs, locked)
+    // Initialize mouse position updates after outputs are created
+    this.initializeMouseUpdates()
+  }
+
   createInputs() {
     return {}
   }
@@ -2470,8 +2706,7 @@ export class MouseOp extends Operator<MouseOp> {
     }
   }
 
-  // Override createListeners to set up our custom update mechanism
-  createListeners() {
+  private initializeMouseUpdates() {
     // Subscribe output to the behavior subject
     const sub = this.mousePosition$.subscribe(pos => {
       this.outputs.position.next(pos)
@@ -5510,6 +5745,7 @@ export const opTypes = {
   FirstPersonViewOp,
   ForLoopBeginOp,
   ForLoopEndOp,
+  ForLoopMetaOp,
   FpsWidgetOp,
   GeocoderOp,
   GeohashLayerOp,

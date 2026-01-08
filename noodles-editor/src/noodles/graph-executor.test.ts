@@ -1,0 +1,624 @@
+// Test file for GraphExecutor implementation
+import { describe, it, expect } from 'vitest'
+import { GraphExecutor, GraphScope, topologicalSort } from './graph-executor'
+import {
+  ForLoopBeginOp,
+  ForLoopEndOp,
+  ForLoopMetaOp,
+  NumberOp,
+  MathOp,
+} from './operators'
+import type { Operator, IOperator } from './operators'
+
+describe('topologicalSort', () => {
+  it('should sort a linear chain correctly', () => {
+    const nodes = new Map<string, Operator<IOperator>>([
+      ['a', { id: 'a' } as any],
+      ['b', { id: 'b' } as any],
+      ['c', { id: 'c' } as any],
+    ])
+
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ]
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.sorted).toEqual(['a', 'b', 'c'])
+    expect(result.cycles).toEqual([])
+  })
+
+  it('should handle diamond dependencies', () => {
+    // a -> b -> d
+    // a -> c -> d
+    const nodes = new Map<string, Operator<IOperator>>([
+      ['a', { id: 'a' } as any],
+      ['b', { id: 'b' } as any],
+      ['c', { id: 'c' } as any],
+      ['d', { id: 'd' } as any],
+    ])
+
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'a', target: 'c' },
+      { source: 'b', target: 'd' },
+      { source: 'c', target: 'd' },
+    ]
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.cycles).toEqual([])
+    // 'a' must come first, 'd' must come last
+    expect(result.sorted[0]).toBe('a')
+    expect(result.sorted[3]).toBe('d')
+    // b and c can be in either order
+    expect(result.sorted.slice(1, 3).sort()).toEqual(['b', 'c'])
+  })
+
+  it('should handle independent subgraphs', () => {
+    const nodes = new Map<string, Operator<IOperator>>([
+      ['a', { id: 'a' } as any],
+      ['b', { id: 'b' } as any],
+      ['x', { id: 'x' } as any],
+      ['y', { id: 'y' } as any],
+    ])
+
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'x', target: 'y' },
+    ]
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.cycles).toEqual([])
+    expect(result.sorted).toHaveLength(4)
+    // a before b, x before y
+    expect(result.sorted.indexOf('a')).toBeLessThan(result.sorted.indexOf('b'))
+    expect(result.sorted.indexOf('x')).toBeLessThan(result.sorted.indexOf('y'))
+  })
+
+  it('should detect simple cycles', () => {
+    const nodes = new Map<string, Operator<IOperator>>([
+      ['a', { id: 'a' } as any],
+      ['b', { id: 'b' } as any],
+      ['c', { id: 'c' } as any],
+    ])
+
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'a' },
+    ]
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.cycles.length).toBeGreaterThan(0)
+  })
+
+  it('should detect self-loops', () => {
+    const nodes = new Map<string, Operator<IOperator>>([
+      ['a', { id: 'a' } as any],
+    ])
+
+    const edges = [{ source: 'a', target: 'a' }]
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.cycles.length).toBeGreaterThan(0)
+  })
+
+  it('should handle empty graph', () => {
+    const nodes = new Map<string, Operator<IOperator>>()
+    const edges: Array<{ source: string; target: string }> = []
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.sorted).toEqual([])
+    expect(result.cycles).toEqual([])
+  })
+
+  it('should handle single node with no edges', () => {
+    const nodes = new Map<string, Operator<IOperator>>([
+      ['a', { id: 'a' } as any],
+    ])
+    const edges: Array<{ source: string; target: string }> = []
+
+    const result = topologicalSort(nodes, edges)
+    expect(result.sorted).toEqual(['a'])
+    expect(result.cycles).toEqual([])
+  })
+})
+
+describe('GraphExecutor', () => {
+  it('should create a GraphExecutor instance with default options', () => {
+    const executor = new GraphExecutor()
+    expect(executor).toBeDefined()
+    expect(executor.getStats()).toEqual({
+      nodeCount: 0,
+      edgeCount: 0,
+      lastExecutionTime: 0,
+      dirtyCount: 0,
+    })
+  })
+
+  it('should create a GraphExecutor with custom options', () => {
+    const executor = new GraphExecutor({
+      parallel: false,
+      batchDelay: 32,
+      maxExecutionTime: 100,
+    })
+    expect(executor).toBeDefined()
+  })
+
+  it('should add and remove nodes', () => {
+    const executor = new GraphExecutor()
+    const op = new NumberOp('/number-1')
+
+    executor.addNode(op)
+    expect(executor.getStats().nodeCount).toBe(1)
+
+    executor.removeNode('/number-1')
+    expect(executor.getStats().nodeCount).toBe(0)
+  })
+
+  it('should add edges between nodes', () => {
+    const executor = new GraphExecutor()
+    const num1 = new NumberOp('/num-1')
+    const num2 = new NumberOp('/num-2')
+    const math = new MathOp('/math-1')
+
+    executor.addNode(num1)
+    executor.addNode(num2)
+    executor.addNode(math)
+
+    executor.addEdge('/num-1', '/math-1')
+    executor.addEdge('/num-2', '/math-1')
+
+    expect(executor.getStats().edgeCount).toBe(2)
+  })
+
+  it('should throw when adding edge that creates cycle', () => {
+    const executor = new GraphExecutor()
+    const op1 = new NumberOp('/op-1')
+    const op2 = new NumberOp('/op-2')
+
+    executor.addNode(op1)
+    executor.addNode(op2)
+
+    executor.addEdge('/op-1', '/op-2')
+
+    expect(() => {
+      executor.addEdge('/op-2', '/op-1')
+    }).toThrow(/cycle/)
+  })
+
+  it('should remove edges', () => {
+    const executor = new GraphExecutor()
+    const op1 = new NumberOp('/op-1')
+    const op2 = new NumberOp('/op-2')
+
+    executor.addNode(op1)
+    executor.addNode(op2)
+    executor.addEdge('/op-1', '/op-2')
+
+    expect(executor.getStats().edgeCount).toBe(1)
+
+    executor.removeEdge('/op-1', '/op-2')
+    expect(executor.getStats().edgeCount).toBe(0)
+  })
+
+  it('should mark nodes as dirty', () => {
+    const executor = new GraphExecutor({ batchDelay: 0 })
+    const op1 = new NumberOp('/op-1')
+    const op2 = new NumberOp('/op-2')
+
+    executor.addNode(op1)
+    executor.addNode(op2)
+
+    executor.markDirty(['/op-1'])
+    expect(executor.getStats().dirtyCount).toBeGreaterThan(0)
+  })
+
+  it('should create a GraphScope', () => {
+    const executor = new GraphExecutor()
+    const scope = executor.createScope('test-scope')
+    expect(scope).toBeDefined()
+    expect(scope).toBeInstanceOf(GraphScope)
+  })
+
+  it('should get node by id', () => {
+    const executor = new GraphExecutor()
+    const op = new NumberOp('/number-1')
+
+    executor.addNode(op)
+    expect(executor.getNode('/number-1')).toBe(op)
+    expect(executor.getNode('/nonexistent')).toBeUndefined()
+  })
+
+  it('should get all edges', () => {
+    const executor = new GraphExecutor()
+    const op1 = new NumberOp('/op-1')
+    const op2 = new NumberOp('/op-2')
+
+    executor.addNode(op1)
+    executor.addNode(op2)
+    executor.addEdge('/op-1', '/op-2')
+
+    const edges = executor.getEdges()
+    expect(edges).toHaveLength(1)
+    expect(edges[0]).toEqual({ source: '/op-1', target: '/op-2' })
+  })
+})
+
+describe('GraphScope', () => {
+  it('should set and get context values with namespacing', () => {
+    const executor = new GraphExecutor()
+    const scope = executor.createScope('test-scope')
+
+    scope.setContext('myKey', 'myValue')
+    expect(scope.getContext('myKey')).toBe('myValue')
+  })
+
+  it('should clone a scope', () => {
+    const executor = new GraphExecutor()
+    const scope = executor.createScope('test-scope')
+    scope.setContext('key', 'value')
+
+    const cloned = scope.clone()
+    expect(cloned).toBeDefined()
+    expect(cloned).not.toBe(scope)
+  })
+
+  it('should mark parent as dirty', () => {
+    const executor = new GraphExecutor({ batchDelay: 0 })
+    const parentOp = new NumberOp('/parent')
+    executor.addNode(parentOp)
+
+    const scope = executor.createScope('/parent')
+    scope.markParentDirty()
+
+    expect(executor.getStats().dirtyCount).toBeGreaterThan(0)
+  })
+})
+
+describe('ForLoopBeginOp', () => {
+  it('should create instance with correct inputs and outputs', () => {
+    const op = new ForLoopBeginOp('/forloop-begin')
+    expect(op).toBeDefined()
+    expect(op.id).toBe('/forloop-begin')
+    expect(op.inputs.data).toBeDefined()
+    expect(op.outputs.d).toBeDefined()
+    expect(op.outputs.index).toBeDefined()
+    expect(op.outputs.total).toBeDefined()
+  })
+
+  it('should execute with array data', () => {
+    const op = new ForLoopBeginOp('/forloop-begin')
+    const result = op.execute({ data: [1, 2, 3] })
+
+    expect(result.d).toBe(1)
+    expect(result.index).toBe(0)
+    expect(result.total).toBe(3)
+  })
+
+  it('should handle empty array', () => {
+    const op = new ForLoopBeginOp('/forloop-begin')
+    const result = op.execute({ data: [] })
+
+    expect(result.d).toBeNull()
+    expect(result.index).toBe(0)
+    expect(result.total).toBe(0)
+  })
+
+  it('should handle non-array data', () => {
+    const op = new ForLoopBeginOp('/forloop-begin')
+    const result = op.execute({ data: 'not an array' as any })
+
+    expect(result.total).toBe(0)
+  })
+
+  it('should have dirty flag', () => {
+    const op = new ForLoopBeginOp('/forloop-begin')
+    expect(op.dirty).toBe(true)
+
+    op.dirty = false
+    expect(op.dirty).toBe(false)
+  })
+})
+
+describe('ForLoopEndOp - execute', () => {
+  // Note: ForLoopEndOp has complex loop handling via createForLoopListeners
+  // These tests cover the basic execute() method
+  it('should have correct inputs and outputs', () => {
+    const op = new ForLoopEndOp('/forloop-end')
+    expect(op).toBeDefined()
+    expect(op.inputs.d).toBeDefined()
+    expect(op.outputs.data).toBeDefined()
+  })
+
+  it('should pass through single value', () => {
+    const op = new ForLoopEndOp('/forloop-end')
+    const result = op.execute({ d: 'test-value' })
+
+    expect(result.data).toBe('test-value')
+  })
+
+  it('should handle null input', () => {
+    const op = new ForLoopEndOp('/forloop-end')
+    const result = op.execute({ d: null })
+
+    expect(result.data).toBeNull()
+  })
+
+  it('should handle object input', () => {
+    const op = new ForLoopEndOp('/forloop-end')
+    const obj = { key: 'value' }
+    const result = op.execute({ d: obj })
+
+    expect(result.data).toEqual(obj)
+  })
+})
+
+describe('ForLoopMetaOp', () => {
+  it('should create instance with correct inputs and outputs', () => {
+    const op = new ForLoopMetaOp('/forloop-meta')
+    expect(op).toBeDefined()
+    expect(op.inputs.initialValue).toBeDefined()
+    expect(op.inputs.currentValue).toBeDefined()
+    expect(op.outputs.accumulator).toBeDefined()
+    expect(op.outputs.index).toBeDefined()
+    expect(op.outputs.total).toBeDefined()
+    expect(op.outputs.isFirst).toBeDefined()
+    expect(op.outputs.isLast).toBeDefined()
+  })
+
+  it('should use initialValue when currentValue is null', () => {
+    const op = new ForLoopMetaOp('/forloop-meta')
+    const result = op.execute({
+      initialValue: 'initial',
+      currentValue: null,
+    })
+
+    expect(result.accumulator).toBe('initial')
+  })
+
+  it('should prefer currentValue over initialValue', () => {
+    const op = new ForLoopMetaOp('/forloop-meta')
+    const result = op.execute({
+      initialValue: 'initial',
+      currentValue: 'current',
+    })
+
+    expect(result.accumulator).toBe('current')
+  })
+
+  it('should return default iteration metadata', () => {
+    const op = new ForLoopMetaOp('/forloop-meta')
+    const result = op.execute({
+      initialValue: 0,
+      currentValue: null,
+    })
+
+    expect(result.index).toBe(0)
+    expect(result.total).toBe(0)
+    expect(result.isFirst).toBe(true)
+    expect(result.isLast).toBe(true)
+  })
+
+  it('should handle numeric accumulator', () => {
+    const op = new ForLoopMetaOp('/forloop-meta')
+    const result = op.execute({
+      initialValue: 0,
+      currentValue: 42,
+    })
+
+    expect(result.accumulator).toBe(42)
+  })
+
+  it('should handle array accumulator', () => {
+    const op = new ForLoopMetaOp('/forloop-meta')
+    const result = op.execute({
+      initialValue: [],
+      currentValue: [1, 2, 3],
+    })
+
+    expect(result.accumulator).toEqual([1, 2, 3])
+  })
+})
+
+describe('Operator dirty flag', () => {
+  it('should initialize with dirty = true', () => {
+    const op = new NumberOp('/number-1')
+    expect(op.dirty).toBe(true)
+  })
+
+  it('should be settable', () => {
+    const op = new NumberOp('/number-1')
+    op.dirty = false
+    expect(op.dirty).toBe(false)
+
+    op.dirty = true
+    expect(op.dirty).toBe(true)
+  })
+
+  it('should be marked dirty via markDirty method', async () => {
+    const op = new NumberOp('/number-1')
+    // First, pull to make the operator clean
+    await op.pull()
+    expect(op.dirty).toBe(false)
+
+    // Now markDirty should set dirty to true
+    op.markDirty()
+    expect(op.dirty).toBe(true)
+  })
+})
+
+describe('Graph execution', () => {
+  it('should execute a single operator and produce output', async () => {
+    const num = new NumberOp('/num')
+    num.inputs.val.setValue(42)
+
+    const result = await num.pull()
+    expect(result.val).toBe(42)
+  })
+
+  it('should execute a chain of connected operators', async () => {
+    // Create a chain: num1 -> math (adds num2)
+    const num1 = new NumberOp('/num1')
+    const num2 = new NumberOp('/num2')
+    const math = new MathOp('/math')
+
+    // Set values
+    num1.inputs.val.setValue(10)
+    num2.inputs.val.setValue(5)
+
+    // Connect num1 to math.a
+    math.inputs.a.addConnection('num1-to-math', num1.outputs.val)
+    math.addUpstreamDependency(num1)
+    num1.addDownstreamDependent(math)
+
+    // Connect num2 to math.b
+    math.inputs.b.addConnection('num2-to-math', num2.outputs.val)
+    math.addUpstreamDependency(num2)
+    num2.addDownstreamDependent(math)
+
+    // Set operator to add
+    math.inputs.operator.setValue('add')
+
+    // Pull from math - should execute upstream operators first
+    const result = await math.pull()
+    expect(result.result).toBe(15) // 10 + 5
+  })
+
+  it('should re-execute when upstream changes', async () => {
+    const num = new NumberOp('/num')
+    const math = new MathOp('/math')
+
+    num.inputs.val.setValue(10)
+    math.inputs.a.addConnection('num-to-math', num.outputs.val)
+    math.inputs.b.setValue(5)
+    math.inputs.operator.setValue('add')
+    math.addUpstreamDependency(num)
+    num.addDownstreamDependent(math)
+
+    // First pull
+    const result1 = await math.pull()
+    expect(result1.result).toBe(15)
+
+    // Change upstream value
+    num.inputs.val.setValue(20)
+
+    // Pull again - should get new value
+    const result2 = await math.pull()
+    expect(result2.result).toBe(25) // 20 + 5
+  })
+
+  it('should use cached result when nothing changed', async () => {
+    const num = new NumberOp('/num')
+    num.inputs.val.setValue(42)
+
+    // First pull
+    const result1 = await num.pull()
+    expect(result1.val).toBe(42)
+    expect(num.dirty).toBe(false)
+
+    // Second pull without changes - should use cache
+    const result2 = await num.pull()
+    expect(result2.val).toBe(42)
+    expect(result1).toBe(result2) // Same reference (cached)
+  })
+
+  it('should propagate dirty flag downstream', async () => {
+    const num = new NumberOp('/num')
+    const math = new MathOp('/math')
+
+    num.inputs.val.setValue(10)
+    math.inputs.a.addConnection('num-to-math', num.outputs.val)
+    math.inputs.b.setValue(5)
+    math.inputs.operator.setValue('add')
+    math.addUpstreamDependency(num)
+    num.addDownstreamDependent(math)
+
+    // Pull to make everything clean
+    await math.pull()
+    expect(num.dirty).toBe(false)
+    expect(math.dirty).toBe(false)
+
+    // Change upstream - should mark downstream dirty
+    num.inputs.val.setValue(20)
+    expect(num.dirty).toBe(true)
+    expect(math.dirty).toBe(true)
+  })
+
+  it('should handle diamond dependencies correctly', async () => {
+    // Create diamond: source -> branch1 -> sink
+    //                source -> branch2 -> sink
+    const source = new NumberOp('/source')
+    const branch1 = new MathOp('/branch1')
+    const branch2 = new MathOp('/branch2')
+    const sink = new MathOp('/sink')
+
+    source.inputs.val.setValue(10)
+
+    // Branch1: source * 2
+    branch1.inputs.a.addConnection('source-to-b1', source.outputs.val)
+    branch1.inputs.b.setValue(2)
+    branch1.inputs.operator.setValue('multiply')
+    branch1.addUpstreamDependency(source)
+    source.addDownstreamDependent(branch1)
+
+    // Branch2: source + 5
+    branch2.inputs.a.addConnection('source-to-b2', source.outputs.val)
+    branch2.inputs.b.setValue(5)
+    branch2.inputs.operator.setValue('add')
+    branch2.addUpstreamDependency(source)
+    source.addDownstreamDependent(branch2)
+
+    // Sink: branch1 + branch2
+    sink.inputs.a.addConnection('b1-to-sink', branch1.outputs.result)
+    sink.inputs.b.addConnection('b2-to-sink', branch2.outputs.result)
+    sink.inputs.operator.setValue('add')
+    sink.addUpstreamDependency(branch1)
+    sink.addUpstreamDependency(branch2)
+    branch1.addDownstreamDependent(sink)
+    branch2.addDownstreamDependent(sink)
+
+    // Pull from sink
+    const result = await sink.pull()
+    // source=10, branch1=10*2=20, branch2=10+5=15, sink=20+15=35
+    expect(result.result).toBe(35)
+  })
+
+  it('should handle deep chains efficiently', async () => {
+    // Create a chain of 10 connected MathOps
+    const source = new NumberOp('/source')
+    source.inputs.val.setValue(1)
+
+    const ops: MathOp[] = []
+    for (let i = 0; i < 10; i++) {
+      const op = new MathOp(`/math-${i}`)
+      op.inputs.operator.setValue('add')
+      op.inputs.b.setValue(1) // Each step adds 1
+
+      if (i === 0) {
+        // Connect to source
+        op.inputs.a.addConnection('source-to-op', source.outputs.val)
+        op.addUpstreamDependency(source)
+        source.addDownstreamDependent(op)
+      } else {
+        // Connect to previous op
+        op.inputs.a.addConnection(`op${i - 1}-to-op`, ops[i - 1].outputs.result)
+        op.addUpstreamDependency(ops[i - 1])
+        ops[i - 1].addDownstreamDependent(op)
+      }
+
+      ops.push(op)
+    }
+
+    // Pull from the last one - should execute entire chain
+    const result = await ops[9].pull()
+    // source=1, then 10 adds of 1: 1+1+1+1+1+1+1+1+1+1+1 = 11
+    expect(result.result).toBe(11)
+
+    // All should be clean now
+    expect(source.dirty).toBe(false)
+    for (const op of ops) {
+      expect(op.dirty).toBe(false)
+    }
+  })
+})
