@@ -28,8 +28,21 @@ const eventHandlers = new Map<string, Set<(data: unknown) => void>>()
 // Tool executor instance
 let toolExecutor: MCPTools | null = null
 
+// Check if running in development mode (localhost)
+const isDevMode = (): boolean => {
+  return (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  )
+}
+
 // Helper to check if message type requires authentication
 const requiresAuth = (type: MessageType): boolean => {
+  // Skip auth in development mode for easier testing
+  if (isDevMode()) {
+    return false
+  }
+
   // These message types don't require auth
   const publicTypes = [
     MessageType.CONNECT,
@@ -99,9 +112,10 @@ const handleWorkerMessage = async (event: MessageEvent) => {
     const token = message.payload?.token || message.payload?.auth?.token
 
     if (!token || !sessionManager.validateToken(token)) {
-      sendToWorker(
-        createErrorMessage('Invalid or expired session token', 'AUTH_FAILED', message.id)
-      )
+      sendToWorker({
+        ...createErrorMessage('Invalid or expired session token', 'AUTH_FAILED'),
+        id: message.id, // Preserve original message ID so client can match the response
+      })
       return
     }
   }
@@ -137,6 +151,27 @@ const handleWorkerMessage = async (event: MessageEvent) => {
 
     case MessageType.STATE_REQUEST:
       await handleStateRequest(message)
+      break
+
+    case MessageType.CONNECT:
+      // External client connected - acknowledge
+      console.log('[Bridge] External client connected:', message.payload)
+      emit('clientConnected', message.payload)
+      break
+
+    case MessageType.DISCONNECT:
+      // External client disconnected
+      console.log('[Bridge] External client disconnected')
+      emit('clientDisconnected', message.payload)
+      break
+
+    case MessageType.PING:
+      // Respond to ping with pong
+      sendToWorker(createMessage(MessageType.PONG, {}, message.id))
+      break
+
+    case MessageType.PONG:
+      // Pong received, nothing to do
       break
 
     default:
@@ -206,74 +241,103 @@ const executeTool = async (
 }
 
 // Handle pipeline creation
+// Supports two formats:
+// 1. Direct nodes/edges: { nodes: [...], edges: [...] }
+// 2. High-level spec: { dataSource, transformations, output }
 const handlePipelineCreate = async (message: PipelineCreateMessage) => {
-  const { spec, options } = message.payload
+  const payload = message.payload as {
+    spec?: { dataSource?: unknown; transformations?: unknown[]; output?: unknown }
+    nodes?: Array<{ id: string; type: string; position?: { x: number; y: number }; data?: { inputs?: Record<string, unknown> } }>
+    edges?: Array<{ id?: string; source: string; target: string; sourceHandle: string; targetHandle: string }>
+    options?: { validateFirst?: boolean; autoConnect?: boolean }
+  }
 
   try {
-    const nodes = []
-    const edges = []
-    let yPosition = 100
+    let nodes: Array<{ id: string; type: string; position: { x: number; y: number }; data: { inputs: Record<string, unknown> } }> = []
+    let edges: Array<{ id: string; source: string; target: string; sourceHandle: string; targetHandle: string }> = []
 
-    // Create data source node
-    const sourceNode = {
-      id: `/source-${Date.now()}`,
-      type: spec.dataSource.type,
-      position: { x: 100, y: yPosition },
-      data: {
-        inputs: spec.dataSource.config,
-      },
-    }
-    nodes.push(sourceNode)
-    yPosition += 150
+    // Check for nodes/edges - can be at top level or inside spec
+    const inputNodes = payload.nodes || (payload.spec as { nodes?: unknown })?.nodes
+    const inputEdges = payload.edges || (payload.spec as { edges?: unknown })?.edges
 
-    // Create transformation nodes
-    let previousNodeId = sourceNode.id
-    for (const transform of spec.transformations) {
-      const transformNode = {
-        id: `/transform-${Date.now()}-${Math.random()}`,
-        type: transform.type,
+    // Check if using direct nodes/edges format
+    if (inputNodes && Array.isArray(inputNodes)) {
+      // Direct format - use nodes and edges as provided
+      nodes = (inputNodes as Array<{ id: string; type: string; position?: { x: number; y: number }; data?: { inputs?: Record<string, unknown> } }>).map(n => ({
+        id: n.id,
+        type: n.type,
+        position: n.position || { x: 100, y: 100 },
+        data: { inputs: n.data?.inputs || {} },
+      }))
+
+      edges = ((inputEdges || []) as Array<{ id?: string; source: string; target: string; sourceHandle: string; targetHandle: string }>).map(e => ({
+        id: e.id || `${e.source}.${e.sourceHandle}->${e.target}.${e.targetHandle}`,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+      }))
+    } else if (payload.spec?.dataSource) {
+      // High-level spec format - convert to nodes/edges
+      const spec = payload.spec as { dataSource: { type: string; config: Record<string, unknown> }; transformations: Array<{ type: string; config: Record<string, unknown> }>; output: { type: string; config: Record<string, unknown> } }
+      const options = payload.options
+      let yPosition = 100
+
+      // Create data source node
+      const sourceNode = {
+        id: `/source-${Date.now()}`,
+        type: spec.dataSource.type,
         position: { x: 100, y: yPosition },
-        data: {
-          inputs: transform.config,
-        },
+        data: { inputs: spec.dataSource.config },
       }
-      nodes.push(transformNode)
+      nodes.push(sourceNode)
+      yPosition += 150
 
-      // Create edge from previous node
-      if (options?.autoConnect !== false) {
+      // Create transformation nodes
+      let previousNodeId = sourceNode.id
+      for (const transform of spec.transformations || []) {
+        const transformNode = {
+          id: `/transform-${Date.now()}-${Math.random()}`,
+          type: transform.type,
+          position: { x: 100, y: yPosition },
+          data: { inputs: transform.config },
+        }
+        nodes.push(transformNode)
+
+        if (options?.autoConnect !== false) {
+          edges.push({
+            id: `${previousNodeId}.out.data->${transformNode.id}.par.data`,
+            source: previousNodeId,
+            target: transformNode.id,
+            sourceHandle: 'out.data',
+            targetHandle: 'par.data',
+          })
+        }
+
+        previousNodeId = transformNode.id
+        yPosition += 150
+      }
+
+      // Create output node
+      const outputNode = {
+        id: `/output-${Date.now()}`,
+        type: spec.output.type,
+        position: { x: 100, y: yPosition },
+        data: { inputs: spec.output.config },
+      }
+      nodes.push(outputNode)
+
+      if (options?.autoConnect !== false && previousNodeId) {
         edges.push({
-          id: `${previousNodeId}.out.data->${transformNode.id}.par.data`,
+          id: `${previousNodeId}.out.data->${outputNode.id}.par.data`,
           source: previousNodeId,
-          target: transformNode.id,
+          target: outputNode.id,
           sourceHandle: 'out.data',
           targetHandle: 'par.data',
         })
       }
-
-      previousNodeId = transformNode.id
-      yPosition += 150
-    }
-
-    // Create output node
-    const outputNode = {
-      id: `/output-${Date.now()}`,
-      type: spec.output.type,
-      position: { x: 100, y: yPosition },
-      data: {
-        inputs: spec.output.config,
-      },
-    }
-    nodes.push(outputNode)
-
-    // Connect to output
-    if (options?.autoConnect !== false && previousNodeId) {
-      edges.push({
-        id: `${previousNodeId}.out.data->${outputNode.id}.par.data`,
-        source: previousNodeId,
-        target: outputNode.id,
-        sourceHandle: 'out.data',
-        targetHandle: 'par.data',
-      })
+    } else {
+      throw new Error('Invalid pipeline spec: must provide either nodes/edges or spec with dataSource/transformations/output')
     }
 
     // Apply modifications to create the pipeline
@@ -287,13 +351,14 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
     }
 
     // Send response
+    const lastNodeId = nodes[nodes.length - 1]?.id || 'unknown'
     sendToWorker(
       createMessage(
         MessageType.TOOL_RESPONSE,
         {
           tool: 'createPipeline',
           result: {
-            pipelineId: outputNode.id,
+            pipelineId: lastNodeId,
             nodes: nodes.map(n => n.id),
             edges: edges.map(e => e.id),
           },
@@ -303,13 +368,13 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
       )
     )
   } catch (error) {
-    sendToWorker(
-      createErrorMessage(
+    sendToWorker({
+      ...createErrorMessage(
         error instanceof Error ? error : 'Failed to create pipeline',
-        'PIPELINE_CREATE_ERROR',
-        { spec }
-      )
-    )
+        'PIPELINE_CREATE_ERROR'
+      ),
+      id: message.id,
+    })
   }
 }
 
