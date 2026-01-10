@@ -626,31 +626,54 @@ export class MCPTools {
   // Get current project state (nodes and edges)
   async getCurrentProject(): Promise<ToolResult> {
     try {
-      if (!this.project) {
+      // Build project state from operator store (works without this.project being set)
+      const allOps = getOpStore().getAllOps()
+
+      if (allOps.length === 0) {
         return {
           success: false,
-          error: 'No project loaded',
+          error: 'No operators found in project',
         }
       }
+
+      // Build nodes from operators
+      const nodes = allOps.map(op => {
+        // Get inputs from operator's params fields
+        const inputs: Record<string, unknown> = {}
+        // biome-ignore lint/suspicious/noExplicitAny: dynamic operator params structure
+        const params = (op as any).params || {}
+        for (const [key, field] of Object.entries(params)) {
+          // biome-ignore lint/suspicious/noExplicitAny: dynamic field value access
+          inputs[key] = (field as any).value
+        }
+
+        return {
+          id: op.id,
+          type: (op.constructor as typeof Operator).type || op.type || 'unknown',
+          displayName: (op.constructor as typeof Operator).displayName || op.id,
+          containerId: op.containerId,
+          position: op.position || { x: 0, y: 0 },
+          inputs,
+        }
+      })
+
+      // If this.project has edges, use them; otherwise return empty edges
+      // (edges are managed by React Flow and may not be available here)
+      const edges = (this.project?.edges || []).map(e => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+      }))
 
       return {
         success: true,
         data: {
-          nodeCount: (this.project.nodes || []).length,
-          edgeCount: (this.project.edges || []).length,
-          nodes: (this.project.nodes || []).map(n => ({
-            id: n.id,
-            type: n.type,
-            position: n.position,
-            inputs: n.data?.inputs || {},
-          })),
-          edges: (this.project.edges || []).map(e => ({
-            id: e.id,
-            source: e.source,
-            target: e.target,
-            sourceHandle: e.sourceHandle,
-            targetHandle: e.targetHandle,
-          })),
+          nodeCount: nodes.length,
+          edgeCount: edges.length,
+          nodes,
+          edges,
         },
       }
     } catch (error) {
@@ -745,26 +768,36 @@ export class MCPTools {
   // List all nodes in the project with their current state
   async listNodes(): Promise<ToolResult> {
     try {
-      if (!this.project) {
+      // Build nodes from operator store (works without this.project being set)
+      const allOps = getOpStore().getAllOps()
+
+      if (allOps.length === 0) {
         return {
           success: false,
-          error: 'No project loaded',
+          error: 'No operators found in project',
         }
       }
 
-      const { getOp } = getOpStore()
-
-      const nodes = (this.project.nodes || []).map(node => {
-        const operator = getOp(node.id)
+      const nodes = allOps.map(op => {
         // biome-ignore lint/suspicious/noExplicitAny: accessing dynamic operator state
-        const executionState = operator ? (operator as any).executionState?.value : null
+        const executionState = (op as any).executionState?.value
+
+        // Get inputs from operator's params fields
+        const inputs: Record<string, unknown> = {}
+        // biome-ignore lint/suspicious/noExplicitAny: dynamic operator params structure
+        const params = (op as any).params || {}
+        for (const [key, field] of Object.entries(params)) {
+          // biome-ignore lint/suspicious/noExplicitAny: dynamic field value access
+          inputs[key] = (field as any).value
+        }
 
         return {
-          id: node.id,
-          type: node.type,
-          position: node.position,
-          inputs: node.data?.inputs || {},
-          locked: node.data?.locked || false,
+          id: op.id,
+          type: (op.constructor as typeof Operator).type || op.type || 'unknown',
+          displayName: (op.constructor as typeof Operator).displayName || op.id,
+          position: op.position || { x: 0, y: 0 },
+          inputs,
+          locked: false,
           executionState: executionState
             ? {
                 status: executionState.status,
@@ -804,23 +837,28 @@ export class MCPTools {
   // Get detailed information about a specific node
   async getNodeInfo(params: { nodeId: string }): Promise<ToolResult> {
     try {
-      if (!this.project) {
-        return {
-          success: false,
-          error: 'No project loaded',
-        }
-      }
+      const operator = getOpStore().getOp(params.nodeId)
 
-      const node = (this.project.nodes || []).find(n => n.id === params.nodeId)
-      if (!node) {
+      if (!operator) {
         return {
           success: false,
           error: `Node not found: ${params.nodeId}`,
         }
       }
 
-      const operator = getOpStore().getOp(params.nodeId)
-      const edges = this.project.edges || []
+      const opType = (operator.constructor as typeof Operator).type || operator.type || 'unknown'
+
+      // Get inputs from operator's params fields
+      const inputs: Record<string, unknown> = {}
+      // biome-ignore lint/suspicious/noExplicitAny: dynamic operator params structure
+      const params_obj = (operator as any).params || {}
+      for (const [key, field] of Object.entries(params_obj)) {
+        // biome-ignore lint/suspicious/noExplicitAny: dynamic field value access
+        inputs[key] = (field as any).value
+      }
+
+      // Get edges from this.project if available
+      const edges = this.project?.edges || []
 
       // Find incoming and outgoing edges
       const incomingEdges = edges.filter(e => e.target === params.nodeId)
@@ -828,20 +866,21 @@ export class MCPTools {
 
       // Get execution state
       // biome-ignore lint/suspicious/noExplicitAny: executionState is a dynamic operator property not in type definitions
-      const executionState = operator ? (operator as any).executionState?.value : null
+      const executionState = (operator as any).executionState?.value
 
       // Get available inputs and outputs from operator schema
       const registry = this.contextLoader?.getOperatorRegistry()
-      const schema = registry?.operators[node.type]
+      const schema = registry?.operators[opType]
 
       return {
         success: true,
         data: {
-          id: node.id,
-          type: node.type,
-          position: node.position,
-          inputs: node.data?.inputs || {},
-          locked: node.data?.locked || false,
+          id: operator.id,
+          type: opType,
+          displayName: (operator.constructor as typeof Operator).displayName || operator.id,
+          position: operator.position || { x: 0, y: 0 },
+          inputs,
+          locked: false,
           executionState: executionState
             ? {
                 status: executionState.status,

@@ -111,7 +111,7 @@ node server-example.js
 
 #### JavaScript/Node.js
 ```javascript
-const { NoodlesClient } = require('./client')
+import { NoodlesClient } from './client.js'
 
 const client = new NoodlesClient({
   host: 'localhost',
