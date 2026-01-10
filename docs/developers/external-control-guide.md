@@ -49,7 +49,7 @@ This is the recommended approach for Claude Desktop users.
 
 ```bash
 cd examples/external-control
-npm install
+yarn install
 ```
 
 #### 2. Configure Claude Desktop
@@ -103,7 +103,7 @@ The bridge server routes messages between external tools and Noodles:
 
 ```bash
 cd examples/external-control
-npm install
+yarn install
 node server-example.js
 ```
 
