@@ -377,6 +377,10 @@ export default function TimelineEditor() {
       setRenderSettings={setRenderSettings}
       renderSettingsDialogOpen={renderSettingsDialogOpen}
       setRenderSettingsDialogOpen={setRenderSettingsDialogOpen}
+      autoLayout={noodles.autoLayout}
+      setAutoLayout={noodles.setAutoLayout}
+      onAutoLayout={noodles.onAutoLayout}
+      selectedNodeCount={noodles.selectedNodeCount}
     />
   )
 

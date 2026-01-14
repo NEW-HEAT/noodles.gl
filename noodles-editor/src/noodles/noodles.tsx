@@ -68,6 +68,7 @@ import { copyDataDirectory, copyPublicFolderData, hasDataDirectory, load, save }
 import { getOp, getOpStore, getUIStore, useNestingStore, useUIStore } from './store'
 import { bindOperatorToTheatre, cleanupRemovedOperators } from './theatre-bindings'
 import { transformGraph } from './transform-graph'
+import { layoutNodes } from './utils/auto-layout'
 import { canConnect } from './utils/can-connect'
 import { directoryHandleCache } from './utils/directory-handle-cache'
 import {
@@ -80,6 +81,8 @@ import { edgeId, nodeId } from './utils/id-utils'
 import { migrateProject } from './utils/migrate-schema'
 import { getParentPath } from './utils/path-utils'
 import {
+  type AutoLayoutSettings,
+  DEFAULT_AUTO_LAYOUT,
   DEFAULT_RENDER_SETTINGS,
   EMPTY_PROJECT,
   NOODLES_VERSION,
@@ -228,6 +231,9 @@ export function getNoodles(): Visualization {
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
+  // Auto-layout settings (declared early as they're used in multiple places)
+  const [autoLayout, setAutoLayout] = useState<AutoLayoutSettings>(DEFAULT_AUTO_LAYOUT)
+
   // Wrap onNodesChange to track node selection and mark unsaved changes
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
@@ -359,13 +365,64 @@ export function getNoodles(): Visualization {
     setEdges,
   })
 
-  // Wrap onConnect to mark unsaved changes
+  const currentContainerId = useNestingStore(state => state.currentContainerId)
+
+  // Auto-layout function for current container (used by onConnect and node addition effects)
+  const applyAutoLayoutToContainer = useCallback(() => {
+    if (!autoLayout.enabled) return
+
+    // Get all nodes in the current container
+    const containerNodes = nodes.filter(node => {
+      const nodeParent = getParentPath(node.id)
+      return currentContainerId === '/' ? nodeParent === '/' : nodeParent === currentContainerId
+    })
+
+    if (containerNodes.length < 2) return
+
+    // Get edges between these nodes
+    const containerNodeIds = new Set(containerNodes.map(n => n.id))
+    const containerEdges = edges.filter(
+      e => containerNodeIds.has(e.source) && containerNodeIds.has(e.target)
+    )
+
+    // Apply layout
+    const layoutedNodes = layoutNodes(containerNodes, containerEdges, autoLayout)
+
+    // Update node positions
+    setNodes(currentNodes =>
+      currentNodes.map(node => {
+        const layoutedNode = layoutedNodes.find(n => n.id === node.id)
+        if (layoutedNode) {
+          return {
+            ...node,
+            position: layoutedNode.position,
+          }
+        }
+        return node
+      })
+    )
+
+    // Fit view to show all nodes with animation
+    setTimeout(() => {
+      reactFlowInstanceRef.current?.fitView({
+        duration: 300,
+        padding: 0.2,
+      })
+    }, 0)
+  }, [autoLayout, nodes, edges, currentContainerId, setNodes])
+
+  // Wrap onConnect to mark unsaved changes and trigger auto-layout if enabled
   const onConnect = useCallback(
     (connection: Connection) => {
       onConnectBase(connection)
       setHasUnsavedChanges(true)
+      // Trigger auto-layout after the connection is established
+      if (autoLayout.enabled) {
+        // Use setTimeout to ensure the edge is added before layout is computed
+        setTimeout(() => applyAutoLayoutToContainer(), 0)
+      }
     },
-    [onConnectBase]
+    [onConnectBase, autoLayout.enabled, applyAutoLayoutToContainer]
   )
 
   // Wrap onNodesDelete to mark unsaved changes
@@ -507,8 +564,6 @@ export function getNoodles(): Visualization {
     blockLibraryRef.current?.openModal(event.clientX, event.clientY)
   }, [])
 
-  const currentContainerId = useNestingStore(state => state.currentContainerId)
-
   // Handle 'v' keyup to create ViewerOp (momentary button behavior)
   useKeyboardShortcut('v', () => {
     analytics.track('viewer_created', { method: 'keyboard' })
@@ -615,6 +670,46 @@ export function getNoodles(): Visualization {
     blockLibraryRef.current?.openModal(centerX, centerY)
   }, [])
 
+  // Handle Cmd+A / Ctrl+A to select all nodes in current container
+  useEffect(() => {
+    const handleSelectAll = (e: KeyboardEvent) => {
+      // Check if Ctrl+A or Cmd+A
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        // Don't trigger in input fields, textareas, etc.
+        const target = e.target as HTMLElement
+        if (
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable
+        ) {
+          return
+        }
+
+        e.preventDefault()
+        analytics.track('select_all_nodes')
+
+        // Select all nodes in the current container
+        setNodes(currentNodes =>
+          currentNodes.map(node => {
+            // Only select nodes that are in the current container level
+            const nodeParent = getParentPath(node.id)
+            const isInCurrentContainer =
+              currentContainerId === '/' ? nodeParent === '/' : nodeParent === currentContainerId
+
+            return {
+              ...node,
+              selected: isInCurrentContainer ? true : node.selected,
+            }
+          })
+        )
+      }
+    }
+
+    document.addEventListener('keydown', handleSelectAll)
+    return () => document.removeEventListener('keydown', handleSelectAll)
+  }, [setNodes, currentContainerId])
+
   // Editor settings state (moved from Theatre.js to project-level settings)
   const [showOverlay, setShowOverlay] = useState(!IS_PROD)
   const [layoutMode, setLayoutMode] = useState<'split' | 'noodles-on-top' | 'output-on-top'>(
@@ -657,6 +752,10 @@ export function getNoodles(): Visualization {
       // Load editor settings from project with defaults
       setLayoutMode(editorSettings?.layoutMode ?? 'noodles-on-top')
       setShowOverlay(editorSettings?.showOverlay ?? !IS_PROD)
+      setAutoLayout({
+        ...DEFAULT_AUTO_LAYOUT,
+        ...editorSettings?.autoLayout,
+      })
 
       // Load render settings with backwards compatibility
       // First try the new format (renderSettings at project root)
@@ -827,6 +926,12 @@ export function getNoodles(): Visualization {
     const projectKeys = getKeysForProject()
     const serializedRenderSettings = serializeRenderSettings(renderSettings)
 
+    // Only include autoLayout if different from defaults
+    const autoLayoutChanged =
+      autoLayout.enabled !== DEFAULT_AUTO_LAYOUT.enabled ||
+      autoLayout.algorithm !== DEFAULT_AUTO_LAYOUT.algorithm ||
+      autoLayout.direction !== DEFAULT_AUTO_LAYOUT.direction
+
     return {
       version: NOODLES_VERSION,
       nodes: serializeNodes(store, nodes, edges),
@@ -836,11 +941,12 @@ export function getNoodles(): Visualization {
       editorSettings: {
         layoutMode,
         showOverlay,
+        ...(autoLayoutChanged ? { autoLayout } : {}),
       },
       ...(serializedRenderSettings ? { renderSettings: serializedRenderSettings } : {}),
       ...(projectKeys ? { apiKeys: projectKeys } : {}),
     }
-  }, [nodes, edges, getTimelineJson, layoutMode, showOverlay, renderSettings])
+  }, [nodes, edges, getTimelineJson, layoutMode, showOverlay, renderSettings, autoLayout])
 
   const onMenuSave = useCallback(async () => {
     if (!projectName) return
@@ -1069,6 +1175,63 @@ export function getNoodles(): Visualization {
     const centerY = pane.top + pane.height / 2
     blockLibraryRef.current?.openModal(centerX, centerY)
   }, [])
+
+  // Count selected nodes for the auto-layout button
+  const selectedNodeCount = useMemo(() => nodes.filter(n => n.selected).length, [nodes])
+
+  // Auto-layout callback for selected nodes
+  const onAutoLayout = useCallback(() => {
+    const selectedNodes = nodes.filter(n => n.selected)
+    if (selectedNodes.length < 3) return
+
+    // Get edges that connect the selected nodes
+    const selectedNodeIds = new Set(selectedNodes.map(n => n.id))
+    const relevantEdges = edges.filter(
+      e => selectedNodeIds.has(e.source) && selectedNodeIds.has(e.target)
+    )
+
+    // Apply layout
+    const layoutedNodes = layoutNodes(selectedNodes, relevantEdges, autoLayout)
+
+    // Update node positions with animation
+    setNodes(currentNodes =>
+      currentNodes.map(node => {
+        const layoutedNode = layoutedNodes.find(n => n.id === node.id)
+        if (layoutedNode) {
+          return {
+            ...node,
+            position: layoutedNode.position,
+          }
+        }
+        return node
+      })
+    )
+
+    // Fit view to show all layouted nodes with animation
+    setTimeout(() => {
+      reactFlowInstanceRef.current?.fitView({
+        nodes: selectedNodes,
+        duration: 300,
+        padding: 0.2,
+      })
+    }, 0)
+  }, [nodes, edges, autoLayout, setNodes])
+
+  // Track previous node count to detect additions
+  const prevNodeCountRef = useRef(nodes.length)
+
+  // Auto-layout when nodes are added (if enabled)
+  useEffect(() => {
+    const currentCount = nodes.length
+    const prevCount = prevNodeCountRef.current
+    prevNodeCountRef.current = currentCount
+
+    // Only trigger if nodes were added (not removed) and auto-layout is enabled
+    if (autoLayout.enabled && currentCount > prevCount && currentCount >= 2) {
+      // Use setTimeout to ensure React Flow has processed the new node
+      setTimeout(() => applyAutoLayoutToContainer(), 50)
+    }
+  }, [nodes.length, autoLayout.enabled, applyAutoLayoutToContainer])
 
   const onNewProject = useCallback(async () => {
     try {
@@ -1530,6 +1693,11 @@ export function getNoodles(): Visualization {
     setShowOverlay,
     renderSettings,
     setRenderSettings,
+    // Auto-layout props
+    autoLayout,
+    setAutoLayout,
+    onAutoLayout,
+    selectedNodeCount,
     // Export these so timeline-editor can create the menu with render actions
     projectName,
     getTimelineJson,

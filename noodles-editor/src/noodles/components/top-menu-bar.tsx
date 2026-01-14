@@ -1,6 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronDownIcon, ExternalLinkIcon } from '@radix-ui/react-icons'
 import { useReactFlow } from '@xyflow/react'
+import { LayoutGrid } from 'lucide-react'
 import { type RefObject, useCallback, useEffect, useMemo, useState } from 'react'
 import logoSvg from '/noodles-favicon.svg'
 import { RenderSettingsDialog } from '../../components/render-settings-dialog'
@@ -11,7 +12,7 @@ import { ContainerOp } from '../operators'
 import { getOpStore, useNestingStore, useUIStore } from '../store'
 import { directoryHandleCache } from '../utils/directory-handle-cache'
 import { getParentPath, splitPath } from '../utils/path-utils'
-import type { RenderSettings } from '../utils/serialization'
+import type { AutoLayoutSettings, RenderSettings } from '../utils/serialization'
 import { Breadcrumbs } from './breadcrumbs'
 import type { CopyControlsRef } from './copy-controls'
 import { DataImporterTool } from './tools/data-importer-tool'
@@ -46,6 +47,11 @@ interface TopMenuBarProps {
   setRenderSettings?: (settings: RenderSettings) => void
   renderSettingsDialogOpen?: boolean
   setRenderSettingsDialogOpen?: (open: boolean) => void
+  // Auto-layout props
+  autoLayout?: AutoLayoutSettings
+  setAutoLayout?: (settings: AutoLayoutSettings) => void
+  onAutoLayout?: () => void
+  selectedNodeCount?: number
 }
 
 export function TopMenuBar({
@@ -75,6 +81,10 @@ export function TopMenuBar({
   setRenderSettings,
   renderSettingsDialogOpen,
   setRenderSettingsDialogOpen,
+  autoLayout,
+  setAutoLayout,
+  onAutoLayout,
+  selectedNodeCount = 0,
 }: TopMenuBarProps) {
   const settingsDialogOpen = useUIStore(state => state.settingsDialogOpen)
   const setSettingsDialogOpen = useUIStore(state => state.setSettingsDialogOpen)
@@ -450,6 +460,100 @@ export function TopMenuBar({
                           </DropdownMenu.SubContent>
                         </DropdownMenu.Portal>
                       </DropdownMenu.Sub>
+
+                      <DropdownMenu.Separator className={s.dropdownSeparator} />
+
+                      <DropdownMenu.CheckboxItem
+                        className={s.dropdownItem}
+                        checked={autoLayout?.enabled}
+                        onCheckedChange={checked =>
+                          setAutoLayout?.({ ...autoLayout!, enabled: checked })
+                        }
+                        disabled={!autoLayout || !setAutoLayout}
+                      >
+                        <DropdownMenu.ItemIndicator className={s.itemIndicator}>
+                          <i className="pi pi-check" style={{ fontSize: '12px' }} />
+                        </DropdownMenu.ItemIndicator>
+                        Auto-layout on changes
+                      </DropdownMenu.CheckboxItem>
+
+                      <DropdownMenu.Sub>
+                        <DropdownMenu.SubTrigger
+                          className={s.dropdownItem}
+                          disabled={!autoLayout || !setAutoLayout}
+                        >
+                          Layout Algorithm
+                          <i
+                            className="pi pi-chevron-right"
+                            style={{ marginLeft: 'auto', fontSize: '10px' }}
+                          />
+                        </DropdownMenu.SubTrigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.SubContent className={s.dropdownContent} sideOffset={2}>
+                            <DropdownMenu.RadioGroup
+                              value={autoLayout?.algorithm}
+                              onValueChange={value =>
+                                setAutoLayout?.({
+                                  ...autoLayout!,
+                                  algorithm: value as 'dagre' | 'd3-force',
+                                })
+                              }
+                            >
+                              <DropdownMenu.RadioItem className={s.dropdownItem} value="dagre">
+                                <DropdownMenu.ItemIndicator className={s.itemIndicator}>
+                                  <i className="pi pi-check" style={{ fontSize: '12px' }} />
+                                </DropdownMenu.ItemIndicator>
+                                Dagre (Hierarchical)
+                              </DropdownMenu.RadioItem>
+                              <DropdownMenu.RadioItem className={s.dropdownItem} value="d3-force">
+                                <DropdownMenu.ItemIndicator className={s.itemIndicator}>
+                                  <i className="pi pi-check" style={{ fontSize: '12px' }} />
+                                </DropdownMenu.ItemIndicator>
+                                D3-Force (Organic)
+                              </DropdownMenu.RadioItem>
+                            </DropdownMenu.RadioGroup>
+                          </DropdownMenu.SubContent>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Sub>
+
+                      <DropdownMenu.Sub>
+                        <DropdownMenu.SubTrigger
+                          className={s.dropdownItem}
+                          disabled={!autoLayout || !setAutoLayout}
+                        >
+                          Layout Direction
+                          <i
+                            className="pi pi-chevron-right"
+                            style={{ marginLeft: 'auto', fontSize: '10px' }}
+                          />
+                        </DropdownMenu.SubTrigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.SubContent className={s.dropdownContent} sideOffset={2}>
+                            <DropdownMenu.RadioGroup
+                              value={autoLayout?.direction}
+                              onValueChange={value =>
+                                setAutoLayout?.({
+                                  ...autoLayout!,
+                                  direction: value as 'LR' | 'TB',
+                                })
+                              }
+                            >
+                              <DropdownMenu.RadioItem className={s.dropdownItem} value="LR">
+                                <DropdownMenu.ItemIndicator className={s.itemIndicator}>
+                                  <i className="pi pi-check" style={{ fontSize: '12px' }} />
+                                </DropdownMenu.ItemIndicator>
+                                Left to Right
+                              </DropdownMenu.RadioItem>
+                              <DropdownMenu.RadioItem className={s.dropdownItem} value="TB">
+                                <DropdownMenu.ItemIndicator className={s.itemIndicator}>
+                                  <i className="pi pi-check" style={{ fontSize: '12px' }} />
+                                </DropdownMenu.ItemIndicator>
+                                Top to Bottom
+                              </DropdownMenu.RadioItem>
+                            </DropdownMenu.RadioGroup>
+                          </DropdownMenu.SubContent>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Sub>
                     </DropdownMenu.SubContent>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Sub>
@@ -560,6 +664,23 @@ export function TopMenuBar({
         </div>
 
         <div className={s.rightSection}>
+          {selectedNodeCount >= 3 && onAutoLayout && (
+            <button
+              type="button"
+              className={s.toolButton}
+              onClick={() => {
+                onAutoLayout()
+                analytics.track('auto_layout_applied', {
+                  nodeCount: selectedNodeCount,
+                  algorithm: autoLayout?.algorithm,
+                })
+              }}
+              title="Auto-layout selected nodes"
+            >
+              <LayoutGrid size={16} />
+              <span className={s.toolLabel}>Layout</span>
+            </button>
+          )}
           <ExternalControlButton />
           {setShowChatPanel && (
             <button

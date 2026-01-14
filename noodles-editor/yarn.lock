@@ -462,6 +462,22 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@dagrejs/dagre@npm:^1.1.8":
+  version: 1.1.8
+  resolution: "@dagrejs/dagre@npm:1.1.8"
+  dependencies:
+    "@dagrejs/graphlib": 2.2.4
+  checksum: 592a9d7ba2702eb8c806c1176625938eb4169fbfa6d9b3a7237c7b06ccf66487df9b90892d76679051e3560b514b0aa9058407a2efa17746e42d22e842876aba
+  languageName: node
+  linkType: hard
+
+"@dagrejs/graphlib@npm:2.2.4":
+  version: 2.2.4
+  resolution: "@dagrejs/graphlib@npm:2.2.4"
+  checksum: 02d2d8df07fd6234bfc82f03f0aebd718f1ffc2ba6579ef67a26e423d9ad25a437256d3342e6342e29ae8a5c5e448a07440d6e218c6e77e390bc57ee73b43d2d
+  languageName: node
+  linkType: hard
+
 "@deck.gl/aggregation-layers@npm:9.2.5":
   version: 9.2.5
   resolution: "@deck.gl/aggregation-layers@npm:9.2.5"
@@ -8126,6 +8142,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"lucide-react@npm:^0.562.0":
+  version: 0.562.0
+  resolution: "lucide-react@npm:0.562.0"
+  peerDependencies:
+    react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+  checksum: 45e4f4abd4cee341882c7a2ae0ff3874f26d30682c1ea5f744269219c8f6fbac0aa78c24f64247a2d8236297aef439babfb96d76182f859c36ac18457f475bf3
+  languageName: node
+  linkType: hard
+
 "lz-string@npm:^1.5.0":
   version: 1.5.0
   resolution: "lz-string@npm:1.5.0"
@@ -8606,6 +8631,7 @@ __metadata:
     "@anthropic-ai/sdk": ^0.71.2
     "@biomejs/biome": ^2.3.11
     "@codeium/react-code-editor": ^1.0.12
+    "@dagrejs/dagre": ^1.1.8
     "@duckdb/duckdb-wasm": 1.32.0
     "@loaders.gl/3d-tiles": ^4.3.4
     "@loaders.gl/obj": ^4.3.4
@@ -8658,6 +8684,7 @@ __metadata:
     haversine-distance: ^1.2.4
     jszip: ^3.10.1
     lodash: ^4.17.21
+    lucide-react: ^0.562.0
     maplibre-gl: ^5.15.0
     mediabunny: ^1.27.4
     memoize-one: ^6.0.0
