@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
 import type { Edge, Node } from '@xyflow/react'
-import { layoutNodes, type LayoutOptions } from './auto-layout'
+import { describe, expect, it } from 'vitest'
+import { type LayoutOptions, layoutNodes } from './auto-layout'
 
 const createNode = (id: string, x = 0, y = 0, width = 200, height = 100): Node => ({
   id,

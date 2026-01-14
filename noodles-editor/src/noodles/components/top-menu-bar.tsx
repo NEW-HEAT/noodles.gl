@@ -501,7 +501,10 @@ export function TopMenuBar({
                                 />
                               </DropdownMenu.SubTrigger>
                               <DropdownMenu.Portal>
-                                <DropdownMenu.SubContent className={s.dropdownContent} sideOffset={2}>
+                                <DropdownMenu.SubContent
+                                  className={s.dropdownContent}
+                                  sideOffset={2}
+                                >
                                   <DropdownMenu.RadioGroup
                                     value={autoLayout?.algorithm}
                                     onValueChange={value =>
@@ -511,13 +514,19 @@ export function TopMenuBar({
                                       })
                                     }
                                   >
-                                    <DropdownMenu.RadioItem className={s.dropdownItem} value="dagre">
+                                    <DropdownMenu.RadioItem
+                                      className={s.dropdownItem}
+                                      value="dagre"
+                                    >
                                       <DropdownMenu.ItemIndicator className={s.itemIndicator}>
                                         <i className="pi pi-check" style={{ fontSize: '12px' }} />
                                       </DropdownMenu.ItemIndicator>
                                       Dagre (Hierarchical)
                                     </DropdownMenu.RadioItem>
-                                    <DropdownMenu.RadioItem className={s.dropdownItem} value="d3-force">
+                                    <DropdownMenu.RadioItem
+                                      className={s.dropdownItem}
+                                      value="d3-force"
+                                    >
                                       <DropdownMenu.ItemIndicator className={s.itemIndicator}>
                                         <i className="pi pi-check" style={{ fontSize: '12px' }} />
                                       </DropdownMenu.ItemIndicator>
@@ -540,7 +549,10 @@ export function TopMenuBar({
                                 />
                               </DropdownMenu.SubTrigger>
                               <DropdownMenu.Portal>
-                                <DropdownMenu.SubContent className={s.dropdownContent} sideOffset={2}>
+                                <DropdownMenu.SubContent
+                                  className={s.dropdownContent}
+                                  sideOffset={2}
+                                >
                                   <DropdownMenu.RadioGroup
                                     value={autoLayout?.direction}
                                     onValueChange={value =>
