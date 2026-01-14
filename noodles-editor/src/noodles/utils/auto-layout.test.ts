@@ -67,7 +67,12 @@ describe('layoutNodes', () => {
 
     it('handles branching graphs', () => {
       const nodes = [createNode('a'), createNode('b'), createNode('c'), createNode('d')]
-      const edges = [createEdge('a', 'b'), createEdge('a', 'c'), createEdge('b', 'd'), createEdge('c', 'd')]
+      const edges = [
+        createEdge('a', 'b'),
+        createEdge('a', 'c'),
+        createEdge('b', 'd'),
+        createEdge('c', 'd'),
+      ]
       const result = layoutNodes(nodes, edges, dagreOptions)
 
       expect(result).toHaveLength(4)
@@ -94,10 +99,8 @@ describe('layoutNodes', () => {
           const w2 = n2.measured?.width ?? 200
           const h2 = n2.measured?.height ?? 100
 
-          const xOverlap =
-            n1.position.x < n2.position.x + w2 && n1.position.x + w1 > n2.position.x
-          const yOverlap =
-            n1.position.y < n2.position.y + h2 && n1.position.y + h1 > n2.position.y
+          const xOverlap = n1.position.x < n2.position.x + w2 && n1.position.x + w1 > n2.position.x
+          const yOverlap = n1.position.y < n2.position.y + h2 && n1.position.y + h1 > n2.position.y
 
           expect(xOverlap && yOverlap).toBe(false)
         }
