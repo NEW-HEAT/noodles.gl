@@ -53,6 +53,8 @@ import { NodeTreeSidebar } from './components/node-tree-sidebar'
 import { edgeComponents, nodeComponents } from './components/op-components'
 import { UNSAVED_PROJECT_NAME } from './components/project-name-bar'
 import { ProjectNotFoundDialog } from './components/project-not-found-dialog'
+import { RenameDialog } from './components/rename-dialog'
+import { SaveAsDialog } from './components/save-as-dialog'
 import { StorageErrorHandler } from './components/storage-error-handler'
 import { UndoRedoHandler, type UndoRedoHandlerRef } from './components/UndoRedoHandler'
 import { useActiveStorageType, useFileSystemStore } from './filesystem-store'
@@ -62,13 +64,18 @@ import { useNodeDropOnEdge } from './hooks/use-node-drop-on-edge'
 import { useProjectModifications } from './hooks/use-project-modifications'
 import type { IOperator, Operator, OutOp } from './operators'
 import { extensionMap } from './operators'
-import { load, save } from './storage'
+import { copyDataDirectory, copyPublicFolderData, hasDataDirectory, load, save } from './storage'
 import { getOp, getOpStore, getUIStore, useNestingStore, useUIStore } from './store'
 import { bindOperatorToTheatre, cleanupRemovedOperators } from './theatre-bindings'
 import { transformGraph } from './transform-graph'
 import { canConnect } from './utils/can-connect'
 import { directoryHandleCache } from './utils/directory-handle-cache'
-import { requestPermission, selectDirectory, writeFileToDirectory } from './utils/filesystem'
+import {
+  fileExists,
+  requestPermission,
+  selectDirectory,
+  writeFileToDirectory,
+} from './utils/filesystem'
 import { edgeId, nodeId } from './utils/id-utils'
 import { migrateProject } from './utils/migrate-schema'
 import { getParentPath } from './utils/path-utils'
@@ -119,7 +126,7 @@ const defaultEdgeOptions: DefaultEdgeOptions = {
 // TheatreJS project names are not included in the Noodles project file.
 // TheatreJS sheet names are included, so they should be the same for every project.
 const THEATRE_SHEET_ID = 'Noodles'
-function useTheatreJs(projectName?: string) {
+function useTheatreJs(projectName: string | null) {
   // Increment whenever a new theatre project is created to keep the project name unique *within theatre*.
   const _projectCounterRef = useRef(1)
   const name = `${projectName || UNSAVED_PROJECT_NAME}-${_projectCounterRef.current}`
@@ -200,16 +207,24 @@ export function getNoodles(): Visualization {
   const params = useParams()
 
   // Get projectId from route params (/examples/:projectId or /projects/:projectId) - router is single source of truth
-  const projectName = params.projectId
+  const projectName = params.projectId ?? null
 
   // Detect if we're on /projects or /examples route to preserve it when navigating
   const routePrefix = location.startsWith('/projects/') ? '/projects' : '/examples'
   const isExamplesRoute = routePrefix === '/examples'
 
   const [showProjectNotFoundDialog, setShowProjectNotFoundDialog] = useState(false)
+  const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
+  const [showRenameDialog, setShowRenameDialog] = useState(false)
+  const [saveAsOptions, setSaveAsOptions] = useState<{
+    targetHandle: FileSystemDirectoryHandle | null
+    hasExistingProject: boolean
+    hasDataFiles: boolean
+  } | null>(null)
   const [showExampleNotFoundDialog, setShowExampleNotFoundDialog] = useState(false)
   const storageType = useActiveStorageType()
-  const { setCurrentDirectory, setActiveStorageType, setError } = useFileSystemStore()
+  const { currentDirectory, setCurrentDirectory, setActiveStorageType, setError } =
+    useFileSystemStore()
   const { theatreReady, theatreProject, theatreSheet, setTheatreProject, getTimelineJson } =
     useTheatreJs(projectName)
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<AnyNodeJSON>([])
@@ -803,6 +818,207 @@ export function getNoodles(): Visualization {
     }
   }, [projectName, getNoodlesProjectJson, storageType, setCurrentDirectory, setError])
 
+  // Step 1 of Save As: Select directory and check conditions
+  const onSaveAs = useCallback(async () => {
+    try {
+      // Prompt user to select/create a directory for the project
+      const directoryHandle = await selectDirectory()
+
+      // Ensure we have write permission
+      const hasPermission = await requestPermission(directoryHandle, 'readwrite')
+      if (!hasPermission) {
+        console.error('Permission denied to write to directory')
+        return
+      }
+
+      // Check if target has existing noodles.json
+      const hasExisting = await fileExists(directoryHandle, 'noodles.json')
+
+      // Check if source has data files
+      const hasData = projectName ? await hasDataDirectory(storageType, projectName) : false
+
+      // Show dialog with options
+      setSaveAsOptions({
+        targetHandle: directoryHandle,
+        hasExistingProject: hasExisting,
+        hasDataFiles: hasData,
+      })
+      setShowSaveAsDialog(true)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        // User cancelled the picker
+        return
+      }
+      console.error('Failed to open directory picker:', error)
+      setError({
+        type: 'unknown',
+        message: 'Error selecting directory',
+        details: error instanceof Error ? error.message : 'Unknown error',
+        originalError: error,
+      })
+    }
+  }, [storageType, projectName, setError])
+
+  // Step 2 of Save As: Actually perform the save
+  const onSaveAsConfirm = useCallback(
+    async (options: { copyDataFiles: boolean }) => {
+      if (!saveAsOptions?.targetHandle) return
+
+      const directoryHandle = saveAsOptions.targetHandle
+      const directoryName = directoryHandle.name
+
+      // Get current project data
+      const projectData = getNoodlesProjectJson()
+
+      // Write project to noodles.json
+      await writeFileToDirectory(directoryHandle, 'noodles.json', safeStringify(projectData))
+
+      // Copy data files if requested
+      if (options.copyDataFiles && projectName) {
+        if (storageType === 'publicFolder') {
+          await copyPublicFolderData(projectName, directoryHandle)
+        } else if (currentDirectory) {
+          await copyDataDirectory(currentDirectory, directoryHandle)
+        }
+      }
+
+      // Cache the directory handle
+      await directoryHandleCache.cacheHandle(directoryName, directoryHandle, directoryHandle.name)
+
+      // Update store with directory handle
+      setCurrentDirectory(directoryHandle, directoryName)
+
+      // Update storage type to fileSystemAccess since we used File System Access API
+      setActiveStorageType('fileSystemAccess')
+
+      // Update the URL to reflect the new project name
+      navigate(`/projects/${directoryName}`, { replace: true })
+
+      // Mark as saved
+      setHasUnsavedChanges(false)
+
+      analytics.track('project_saved_as', {
+        fromStorageType: storageType,
+        toStorageType: 'fileSystemAccess',
+        copyDataFiles: options.copyDataFiles,
+        overwroteExisting: saveAsOptions.hasExistingProject,
+      })
+    },
+    [
+      saveAsOptions,
+      getNoodlesProjectJson,
+      projectName,
+      storageType,
+      currentDirectory,
+      setCurrentDirectory,
+      setActiveStorageType,
+      navigate,
+    ]
+  )
+
+  // Open rename dialog
+  const onRename = useCallback(() => {
+    if (!projectName || storageType === 'publicFolder') return
+    setShowRenameDialog(true)
+  }, [projectName, storageType])
+
+  // Perform rename (copy to new location with new name)
+  const onRenameConfirm = useCallback(
+    async (newName: string) => {
+      try {
+        // Prompt user to select/create a directory with the new name
+        const directoryHandle = await selectDirectory()
+
+        // Verify the directory name matches what user entered (case-insensitive for macOS/Windows)
+        if (directoryHandle.name.toLowerCase() !== newName.toLowerCase()) {
+          throw new Error(
+            `Selected folder name "${directoryHandle.name}" does not match the entered name "${newName}". Please select or create a folder with the name "${newName}".`
+          )
+        }
+
+        // Ensure we have write permission
+        const hasPermission = await requestPermission(directoryHandle, 'readwrite')
+        if (!hasPermission) {
+          throw new Error('Permission denied to write to directory')
+        }
+
+        // Get current project data
+        const projectData = getNoodlesProjectJson()
+
+        // Write project to noodles.json
+        await writeFileToDirectory(directoryHandle, 'noodles.json', safeStringify(projectData))
+
+        // Copy data files
+        if (currentDirectory) {
+          await copyDataDirectory(currentDirectory, directoryHandle)
+        }
+
+        // Update cache: remove old, add new
+        if (projectName) {
+          await directoryHandleCache.renameProject(projectName, newName, directoryHandle)
+        } else {
+          await directoryHandleCache.cacheHandle(newName, directoryHandle, directoryHandle.name)
+        }
+
+        // Update store with directory handle
+        setCurrentDirectory(directoryHandle, newName)
+
+        // Update storage type to fileSystemAccess since we used File System Access API
+        setActiveStorageType('fileSystemAccess')
+
+        // Update the URL to reflect the new project name
+        navigate(`/projects/${newName}`, { replace: true })
+
+        // Mark as saved
+        setHasUnsavedChanges(false)
+
+        analytics.track('project_renamed', {
+          fromStorageType: storageType,
+          toStorageType: 'fileSystemAccess',
+        })
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          // User cancelled the picker - throw to keep dialog open
+          throw new Error('Directory selection was cancelled')
+        }
+        throw error // Re-throw to be handled by the dialog
+      }
+    },
+    [
+      getNoodlesProjectJson,
+      projectName,
+      storageType,
+      currentDirectory,
+      setCurrentDirectory,
+      setActiveStorageType,
+      navigate,
+    ]
+  )
+
+  // Handle mod+shift+s for Save As and mod+shift+a for Rename Project
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase()
+      const isMod = e.metaKey || e.ctrlKey
+      const isShift = e.shiftKey
+
+      // mod+shift+s for Save As
+      if (isMod && isShift && key === 's') {
+        e.preventDefault()
+        onSaveAs()
+      }
+      // mod+shift+a for Rename Project
+      if (isMod && isShift && key === 'a') {
+        e.preventDefault()
+        if (projectName && storageType !== 'publicFolder') {
+          setShowRenameDialog(true)
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [projectName, storageType, onSaveAs])
+
   const onDownload = useCallback(async () => {
     const noodlesProjectJson = getNoodlesProjectJson()
     await saveProjectLocally(projectName || 'untitled', noodlesProjectJson, storageType)
@@ -1130,6 +1346,23 @@ export function getNoodles(): Visualization {
           onImport={onImport}
           onClose={() => setShowProjectNotFoundDialog(false)}
         />
+        <SaveAsDialog
+          open={showSaveAsDialog}
+          onClose={() => {
+            setShowSaveAsDialog(false)
+            setSaveAsOptions(null)
+          }}
+          onConfirm={onSaveAsConfirm}
+          targetDirectoryName={saveAsOptions?.targetHandle?.name || ''}
+          hasExistingProject={saveAsOptions?.hasExistingProject || false}
+          hasDataFiles={saveAsOptions?.hasDataFiles || false}
+        />
+        <RenameDialog
+          open={showRenameDialog}
+          onClose={() => setShowRenameDialog(false)}
+          onConfirm={onRenameConfirm}
+          currentName={projectName || ''}
+        />
         <ExampleNotFoundDialog
           projectName={projectName || ''}
           open={showExampleNotFoundDialog}
@@ -1262,6 +1495,8 @@ export function getNoodles(): Visualization {
     projectName,
     getTimelineJson,
     onSaveProject: onMenuSave,
+    onSaveAs,
+    onRename: storageType !== 'publicFolder' ? onRename : undefined,
     onDownload,
     onNewProject,
     onImport,
