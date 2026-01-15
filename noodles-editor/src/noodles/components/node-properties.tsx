@@ -2,11 +2,14 @@ import type { NodeJSON } from 'SKIP-@xyflow/react'
 import type { Edge } from '@xyflow/react'
 import { useEdges, useNodes, useReactFlow } from '@xyflow/react'
 import cx from 'classnames'
+import { LayoutGrid } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { analytics } from '../../utils/analytics'
 import { type Field, IN_NS, ListField, OUT_NS } from '../fields'
 import type { Operator } from '../operators'
 import { getOpStore } from '../store'
+import type { AutoLayoutSettings } from '../utils/serialization'
 import s from './node-properties.module.css'
 import { handleClass, headerClass, typeCategory } from './op-components'
 
@@ -324,7 +327,12 @@ function NodeProperties({ node }: { node: NodeJSON<unknown> }) {
   )
 }
 
-export function PropertyPanel() {
+interface PropertyPanelProps {
+  onAutoLayout?: () => void
+  autoLayout?: AutoLayoutSettings
+}
+
+export function PropertyPanel({ onAutoLayout, autoLayout }: PropertyPanelProps) {
   const nodes = useNodes()
   const edges = useEdges()
   const selectedNodes = nodes.filter(n => n.selected)
@@ -340,9 +348,26 @@ export function PropertyPanel() {
             <div className={s.title}>Page</div>
           </div>
           {selectedNodes.length > 1 ? (
-            <div>
+            <div className={s.selectionInfo}>
               <div>{selectedNodes.length} nodes selected</div>
               <div>{selectedEdges.length} edges selected</div>
+              {selectedNodes.length >= 3 && onAutoLayout && (
+                <button
+                  type="button"
+                  className={s.layoutButton}
+                  onClick={() => {
+                    onAutoLayout()
+                    analytics.track('auto_layout_applied', {
+                      nodeCount: selectedNodes.length,
+                      algorithm: autoLayout?.algorithm,
+                    })
+                  }}
+                  title="Auto-layout selected nodes"
+                >
+                  <LayoutGrid size={16} />
+                  <span>Layout</span>
+                </button>
+              )}
             </div>
           ) : (
             <div>Select a node to see properties</div>

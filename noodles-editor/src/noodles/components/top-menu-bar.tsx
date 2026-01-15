@@ -1,7 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronDownIcon, ExternalLinkIcon } from '@radix-ui/react-icons'
 import { useReactFlow } from '@xyflow/react'
-import { LayoutGrid } from 'lucide-react'
 import { type RefObject, useCallback, useEffect, useMemo, useState } from 'react'
 import logoSvg from '/noodles-favicon.svg'
 import { RenderSettingsDialog } from '../../components/render-settings-dialog'
@@ -47,11 +46,9 @@ interface TopMenuBarProps {
   setRenderSettings?: (settings: RenderSettings) => void
   renderSettingsDialogOpen?: boolean
   setRenderSettingsDialogOpen?: (open: boolean) => void
-  // Auto-layout props
+  // Auto-layout props (for settings menu)
   autoLayout?: AutoLayoutSettings
   setAutoLayout?: (settings: AutoLayoutSettings) => void
-  onAutoLayout?: () => void
-  selectedNodeCount?: number
 }
 
 export function TopMenuBar({
@@ -83,8 +80,6 @@ export function TopMenuBar({
   setRenderSettingsDialogOpen,
   autoLayout,
   setAutoLayout,
-  onAutoLayout,
-  selectedNodeCount = 0,
 }: TopMenuBarProps) {
   const settingsDialogOpen = useUIStore(state => state.settingsDialogOpen)
   const setSettingsDialogOpen = useUIStore(state => state.setSettingsDialogOpen)
@@ -691,23 +686,6 @@ export function TopMenuBar({
         </div>
 
         <div className={s.rightSection}>
-          {selectedNodeCount >= 3 && onAutoLayout && (
-            <button
-              type="button"
-              className={s.toolButton}
-              onClick={() => {
-                onAutoLayout()
-                analytics.track('auto_layout_applied', {
-                  nodeCount: selectedNodeCount,
-                  algorithm: autoLayout?.algorithm,
-                })
-              }}
-              title="Auto-layout selected nodes"
-            >
-              <LayoutGrid size={16} />
-              <span className={s.toolLabel}>Layout</span>
-            </button>
-          )}
           <ExternalControlButton />
           {setShowChatPanel && (
             <button

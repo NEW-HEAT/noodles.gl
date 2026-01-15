@@ -671,44 +671,33 @@ export function getNoodles(): Visualization {
   }, [])
 
   // Handle Cmd+A / Ctrl+A to select all nodes in current container
-  useEffect(() => {
-    const handleSelectAll = (e: KeyboardEvent) => {
-      // Check if Ctrl+A or Cmd+A
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        // Don't trigger in input fields, textareas, etc.
-        const target = e.target as HTMLElement
-        if (
-          target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable
-        ) {
-          return
-        }
+  const selectAllNodes = useCallback(
+    (e: KeyboardEvent) => {
+      e.preventDefault()
+      analytics.track('select_all_nodes')
 
-        e.preventDefault()
-        analytics.track('select_all_nodes')
+      // Select all nodes in the current container
+      setNodes(currentNodes =>
+        currentNodes.map(node => {
+          // Only select nodes that are in the current container level
+          const nodeParent = getParentPath(node.id)
+          const isInCurrentContainer =
+            currentContainerId === '/' ? nodeParent === '/' : nodeParent === currentContainerId
 
-        // Select all nodes in the current container
-        setNodes(currentNodes =>
-          currentNodes.map(node => {
-            // Only select nodes that are in the current container level
-            const nodeParent = getParentPath(node.id)
-            const isInCurrentContainer =
-              currentContainerId === '/' ? nodeParent === '/' : nodeParent === currentContainerId
+          return {
+            ...node,
+            selected: isInCurrentContainer ? true : node.selected,
+          }
+        })
+      )
+      return false // Stop propagation
+    },
+    [setNodes, currentContainerId]
+  )
 
-            return {
-              ...node,
-              selected: isInCurrentContainer ? true : node.selected,
-            }
-          })
-        )
-      }
-    }
-
-    document.addEventListener('keydown', handleSelectAll)
-    return () => document.removeEventListener('keydown', handleSelectAll)
-  }, [setNodes, currentContainerId])
+  // Register both cmd+a (Mac) and ctrl+a (Windows/Linux)
+  useKeyboardShortcut('cmd+a', selectAllNodes, [selectAllNodes])
+  useKeyboardShortcut('ctrl+a', selectAllNodes, [selectAllNodes])
 
   // Editor settings state (moved from Theatre.js to project-level settings)
   const [showOverlay, setShowOverlay] = useState(!IS_PROD)
@@ -1175,9 +1164,6 @@ export function getNoodles(): Visualization {
     const centerY = pane.top + pane.height / 2
     blockLibraryRef.current?.openModal(centerX, centerY)
   }, [])
-
-  // Count selected nodes for the auto-layout button
-  const selectedNodeCount = useMemo(() => nodes.filter(n => n.selected).length, [nodes])
 
   // Auto-layout callback for selected nodes
   const onAutoLayout = useCallback(() => {
@@ -1679,7 +1665,7 @@ export function getNoodles(): Visualization {
 
   const propertiesPanel = (
     <div className={s.rightPanel}>
-      <PropertyPanel />
+      <PropertyPanel onAutoLayout={onAutoLayout} autoLayout={autoLayout} />
     </div>
   )
 
@@ -1693,11 +1679,9 @@ export function getNoodles(): Visualization {
     setShowOverlay,
     renderSettings,
     setRenderSettings,
-    // Auto-layout props
+    // Auto-layout props (for settings menu)
     autoLayout,
     setAutoLayout,
-    onAutoLayout,
-    selectedNodeCount,
     // Export these so timeline-editor can create the menu with render actions
     projectName,
     getTimelineJson,
