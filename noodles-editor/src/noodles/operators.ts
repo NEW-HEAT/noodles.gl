@@ -3347,6 +3347,18 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
       views: new ListField(new ViewField()),
       widgets: new ListField(new WidgetField(), { showByDefault: false }),
       layerFilter: new FunctionField(() => true, { showByDefault: false }),
+      // Controller configuration for deck.gl interactivity
+      controller: new CompoundPropsField({
+        scrollZoom: new BooleanField(true),
+        dragPan: new BooleanField(true),
+        dragRotate: new BooleanField(true),
+        doubleClickZoom: new BooleanField(true),
+        touchZoom: new BooleanField(true),
+        touchRotate: new BooleanField(true),
+        keyboard: new BooleanField(true),
+        // Inertia for smooth deceleration after gestures
+        inertia: new BooleanField(true),
+      }, { optional: true, showByDefault: false }),
       // TODO: We need a nullable field. This should be a nullable (intentionally empty), or a compound object below.
       // TODO: Nullable fields need to be disable-able from the UI so their values can be cleared.
       basemap: new UnknownField(
@@ -3382,9 +3394,14 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
     basemap,
     views,
     layerFilter,
+    controller,
   }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     // Validate the ViewState to ensure lat/lng are within valid bounds
     validateViewState(viewState)
+
+    // Debug: log views and controller
+    console.log('[DeckRendererOp] views:', views, 'length:', views?.length)
+    console.log('[DeckRendererOp] controller:', controller)
 
     const deckProps: DeckProps & { layers: (LayerProps & { type: string })[] } = {
       layers,
@@ -3393,6 +3410,8 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
       viewState,
       layerFilter,
       widgets,
+      // Include controller config if provided - use true as default for interactivity
+      controller: controller && Object.keys(controller).length > 0 ? controller : true,
     }
 
     // Prefer viewState values when using a basemap
@@ -3422,6 +3441,8 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
 // Base view fields that apply to all view types
 function createBaseViewFields() {
   return {
+    // Controller enables user interaction (pan, zoom, rotate)
+    controller: new BooleanField(true),
     x: new NumberField(0, { showByDefault: false }),
     y: new NumberField(0, { showByDefault: false }),
     width: new StringField('100%'),
@@ -4220,6 +4241,11 @@ export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
       fontFamily: new StringField('Monaco, monospace'),
       fontWeight: new StringField('bold'),
       clusterTextSize: new NumberField(16, { min: 1, max: 100 }),
+      // Parameters for WebGL settings (cullMode fix for GlobeView text)
+      parameters: new CompoundPropsField({
+        depthTest: new BooleanField(true),
+        cull: new BooleanField(true),
+      }),
       // Extensions (for consistency with other layer ops)
       extensions: new ListField(new ExtensionField()),
     }
@@ -4230,10 +4256,6 @@ export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
     }
   }
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    // Debug: log props to help troubleshoot
-    if (props.data && Array.isArray(props.data)) {
-      console.log('[IconClusterLayerOp] Creating layer with', props.data.length, 'points, visible:', props.visible)
-    }
     const layer = {
       ...parseLayerProps<IconClusterLayerProps>(props as Parameters<typeof parseLayerProps>[0]),
       type: 'IconClusterLayer' as const,
