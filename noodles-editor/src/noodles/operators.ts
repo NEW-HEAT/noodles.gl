@@ -4219,6 +4219,8 @@ export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
       // Text styling
       fontFamily: new StringField('Monaco, monospace'),
       fontWeight: new StringField('bold'),
+      // Extensions (for consistency with other layer ops)
+      extensions: new ListField(new ExtensionField()),
     }
   }
   createOutputs() {
@@ -4227,8 +4229,12 @@ export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
     }
   }
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    // Debug: log props to help troubleshoot
+    if (props.data && Array.isArray(props.data)) {
+      console.log('[IconClusterLayerOp] Creating layer with', props.data.length, 'points, visible:', props.visible)
+    }
     const layer = {
-      ...parseLayerProps<IconClusterLayerProps>(props),
+      ...parseLayerProps<IconClusterLayerProps>(props as Parameters<typeof parseLayerProps>[0]),
       type: 'IconClusterLayer' as const,
       id: this.id,
       updateTriggers: gatherTriggers(this.inputs, props),
