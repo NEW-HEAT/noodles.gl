@@ -4219,6 +4219,7 @@ export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
       // Text styling
       fontFamily: new StringField('Monaco, monospace'),
       fontWeight: new StringField('bold'),
+      clusterTextSize: new NumberField(16, { min: 1, max: 100 }),
       // Extensions (for consistency with other layer ops)
       extensions: new ListField(new ExtensionField()),
     }
