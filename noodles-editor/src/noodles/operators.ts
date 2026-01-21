@@ -3939,6 +3939,11 @@ export class TextLayerOp extends Operator<TextLayerOp> {
         smoothing: new NumberField(0.1, { min: 0, max: 1, step: 0.01 }),
       }),
       extensions: new ListField(new ExtensionField()),
+      parameters: new CompoundPropsField({
+        cullMode: new StringLiteralField('none', {
+          values: ['none', 'back', 'front'],
+        }),
+      }),
     }
   }
   createOutputs() {
@@ -4260,6 +4265,11 @@ export class GeoJsonLayerOp extends Operator<GeoJsonLayerOp> {
       elevationScale: new NumberField(1, { min: 0, softMax: 100 }),
       _full3d: new BooleanField(false),
       extensions: new ListField(new ExtensionField()),
+      parameters: new CompoundPropsField({
+        cullMode: new StringLiteralField('none', {
+          values: ['none', 'back', 'front'],
+        }),
+      }),
     }
   }
   createOutputs() {
