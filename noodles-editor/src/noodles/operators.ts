@@ -3399,10 +3399,6 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
     // Validate the ViewState to ensure lat/lng are within valid bounds
     validateViewState(viewState)
 
-    // Debug: log views and controller
-    console.log('[DeckRendererOp] views:', views, 'length:', views?.length)
-    console.log('[DeckRendererOp] controller:', controller)
-
     const deckProps: DeckProps & { layers: (LayerProps & { type: string })[] } = {
       layers,
       effects,
