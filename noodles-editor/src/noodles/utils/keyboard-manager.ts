@@ -20,14 +20,12 @@ interface ShortcutRegistration {
 
 const inputTags = ['INPUT', 'SELECT', 'TEXTAREA']
 
-/**
- * Parse a shortcut string into a descriptor.
- * Supports formats like: "a", "cmd+a", "ctrl+a", "ctrl+shift+s", "meta+a"
- * - "cmd" and "meta" both map to metaKey (Cmd on Mac)
- * - "ctrl" maps to ctrlKey
- * - "shift" maps to shiftKey
- * - "alt" and "option" map to altKey
- */
+// Parse a shortcut string into a descriptor.
+// Supports formats like: "a", "cmd+a", "ctrl+a", "ctrl+shift+s", "meta+a"
+// - "cmd" and "meta" both map to metaKey (Cmd on Mac)
+// - "ctrl" maps to ctrlKey
+// - "shift" maps to shiftKey
+// - "alt" and "option" map to altKey
 function parseShortcut(shortcut: string): ShortcutDescriptor {
   const parts = shortcut.toLowerCase().split('+')
   const descriptor: ShortcutDescriptor = {
@@ -63,16 +61,12 @@ function parseShortcut(shortcut: string): ShortcutDescriptor {
   return descriptor
 }
 
-/**
- * Check if a shortcut descriptor has any modifier keys.
- */
+// Check if a shortcut descriptor has any modifier keys.
 function hasModifiers(shortcut: ShortcutDescriptor): boolean {
   return shortcut.ctrl || shortcut.meta || shortcut.shift || shortcut.alt
 }
 
-/**
- * Check if a keyboard event matches a shortcut descriptor.
- */
+// Check if a keyboard event matches a shortcut descriptor.
 function matchesShortcut(event: KeyboardEvent, shortcut: ShortcutDescriptor): boolean {
   const key = event.key.toLowerCase()
 
@@ -132,12 +126,10 @@ class KeyboardManager {
     }
   }
 
-  /**
-   * Register a keyboard shortcut handler.
-   * @param shortcut - The shortcut string (e.g., "a", "cmd+a", "ctrl+shift+s")
-   * @param handler - The handler function, return false to stop propagation
-   * @returns An unregister function
-   */
+  // Register a keyboard shortcut handler.
+  // shortcut: The shortcut string (e.g., "a", "cmd+a", "ctrl+shift+s")
+  // handler: The handler function, return false to stop propagation
+  // Returns an unregister function
   register(shortcut: string, handler: ShortcutHandler): () => void {
     const id = Symbol('shortcut')
     const parsed = parseShortcut(shortcut)

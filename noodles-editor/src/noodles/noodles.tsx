@@ -695,9 +695,9 @@ export function getNoodles(): Visualization {
     [setNodes, currentContainerId]
   )
 
-  // Register both cmd+a (Mac) and ctrl+a (Windows/Linux)
-  useKeyboardShortcut('cmd+a', selectAllNodes, [selectAllNodes])
-  useKeyboardShortcut('ctrl+a', selectAllNodes, [selectAllNodes])
+  // Register platform-specific select-all shortcut
+  const isMac = useMemo(() => navigator.platform.toUpperCase().indexOf('MAC') >= 0, [])
+  useKeyboardShortcut(isMac ? 'cmd+a' : 'ctrl+a', selectAllNodes, [selectAllNodes, isMac])
 
   // Editor settings state (moved from Theatre.js to project-level settings)
   const [showOverlay, setShowOverlay] = useState(!IS_PROD)
