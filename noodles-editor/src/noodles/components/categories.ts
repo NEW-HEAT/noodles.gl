@@ -44,6 +44,7 @@ export const categories = {
     'H3HexagonLayer',
     'HeatmapLayer',
     'HexagonLayer',
+    'IconClusterLayer',
     'IconLayer',
     'LineLayer',
     'MVTLayer',
