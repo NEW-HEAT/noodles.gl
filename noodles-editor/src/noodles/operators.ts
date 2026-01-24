@@ -4090,6 +4090,8 @@ export class TextLayerOp extends Operator<TextLayerOp> {
       extensions: new ListField(new ExtensionField(), { showByDefault: false }),
       parameters: new CompoundPropsField(
         {
+          depthTest: new BooleanField(true),
+          depthWriteEnabled: new BooleanField(true),
           cullMode: new StringLiteralField('none', {
             values: ['none', 'back', 'front'],
           }),
@@ -4167,6 +4169,91 @@ export class IconLayerOp extends Operator<IconLayerOp> {
     const layer = {
       ...parseLayerProps<IconLayerProps>(props),
       type: 'IconLayer' as const,
+      id: this.id,
+      updateTriggers: gatherTriggers(this.inputs, props),
+    }
+    return { layer }
+  }
+}
+
+/**
+ * IconClusterLayerOp - Supercluster-based point clustering with globe visibility support
+ *
+ * This operator creates an IconClusterLayer that:
+ * - Uses Supercluster for efficient point clustering
+ * - Supports dynamic clustering (re-clusters based on visible points)
+ * - Has built-in globe visibility constraints (opacity fading for back-of-globe)
+ * - Renders clusters as circles with count labels, individual points when unclustered
+ *
+ * Note: Requires IconClusterLayer to be registered in deck.gl's layer registry.
+ */
+interface IconClusterLayerProps extends LayerProps {
+  data: unknown[]
+  getPosition?: ((d: unknown) => [number, number]) | [number, number]
+  getPointId?: ((d: unknown) => string | number) | string | number
+  clusterRadius?: number
+  clusterMaxZoom?: number
+  clusterFillColor?: [number, number, number, number]
+  clusterTextColor?: [number, number, number, number]
+  clusterRadiusScale?: number
+  clusterRadiusMinPixels?: number
+  clusterRadiusMaxPixels?: number
+  pointFillColor?: [number, number, number, number]
+  pointRadiusMinPixels?: number
+  pointRadiusMaxPixels?: number
+  fontFamily?: string
+  fontWeight?: string
+  sizeScale?: number
+  dynamicClustering?: boolean
+  sizeByCount?: boolean
+}
+
+export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
+  static displayName = 'IconClusterLayer'
+  static description =
+    'Cluster points using Supercluster with globe visibility support. Renders clusters as circles with counts.'
+  static cacheable = false
+  createInputs() {
+    return {
+      data: new DataField(),
+      visible: new BooleanField(true),
+      opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
+      getPosition: new Point3DField([0, 0, 0], { returnType: 'tuple', accessor: true }),
+      // Clustering configuration
+      clusterRadius: new NumberField(80, { min: 1, max: 500 }),
+      clusterMaxZoom: new NumberField(16, { min: 0, max: 24 }),
+      dynamicClustering: new BooleanField(false),
+      sizeByCount: new BooleanField(false),
+      // Cluster circle styling
+      clusterFillColor: new ColorField('#3366cc', { transform: hexToColor }),
+      clusterTextColor: new ColorField('#ffffff', { transform: hexToColor }),
+      clusterRadiusMinPixels: new NumberField(20, { min: 1, max: 200 }),
+      clusterRadiusMaxPixels: new NumberField(100, { min: 1, max: 500 }),
+      // Individual point styling
+      pointFillColor: new ColorField('#ff8c00', { transform: hexToColor }),
+      pointRadiusMinPixels: new NumberField(8, { min: 1, max: 100 }),
+      pointRadiusMaxPixels: new NumberField(20, { min: 1, max: 200 }),
+      // Text styling
+      fontFamily: new StringField('Monaco, monospace'),
+      fontWeight: new StringField('bold'),
+      clusterTextSize: new NumberField(16, { min: 1, max: 100 }),
+      // Parameters for WebGL settings
+      parameters: new CompoundPropsField({
+        depthTest: new BooleanField(true),
+        cull: new BooleanField(true),
+      }),
+      extensions: new ListField(new ExtensionField()),
+    }
+  }
+  createOutputs() {
+    return {
+      layer: new LayerField<IconClusterLayerProps>(),
+    }
+  }
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const layer = {
+      ...parseLayerProps<IconClusterLayerProps>(props as Parameters<typeof parseLayerProps>[0]),
+      type: 'IconClusterLayer' as const,
       id: this.id,
       updateTriggers: gatherTriggers(this.inputs, props),
     }
@@ -6456,6 +6543,7 @@ export const opTypes = {
   HexagonLayerOp,
   HSLOp,
   HueSaturationExtensionOp,
+  IconClusterLayerOp,
   IconLayerOp,
   JSONOp,
   KmlToGeoJsonOp,
