@@ -4074,6 +4074,8 @@ export class TextLayerOp extends Operator<TextLayerOp> {
       extensions: new ListField(new ExtensionField(), { showByDefault: false }),
       parameters: new CompoundPropsField(
         {
+          depthTest: new BooleanField(true),
+          depthWriteEnabled: new BooleanField(true),
           cullMode: new StringLiteralField('none', {
             values: ['none', 'back', 'front'],
           }),
