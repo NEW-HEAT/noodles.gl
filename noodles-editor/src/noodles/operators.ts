@@ -4177,17 +4177,17 @@ export class IconLayerOp extends Operator<IconLayerOp> {
 }
 
 /**
- * IconClusterLayerOp - Supercluster-based point clustering with globe visibility support
+ * GlobalClusterLayerOp - Supercluster-based point clustering with globe visibility support
  *
- * This operator creates an IconClusterLayer that:
+ * This operator creates a GlobalClusterLayer that:
  * - Uses Supercluster for efficient point clustering
  * - Supports dynamic clustering (re-clusters based on visible points)
  * - Has built-in globe visibility constraints (opacity fading for back-of-globe)
  * - Renders clusters as circles with count labels, individual points when unclustered
  *
- * Note: Requires IconClusterLayer to be registered in deck.gl's layer registry.
+ * Note: Requires GlobalClusterLayer from @deck.gl-community/geo-layers.
  */
-interface IconClusterLayerProps extends LayerProps {
+interface GlobalClusterLayerProps extends LayerProps {
   data: unknown[]
   getPosition?: ((d: unknown) => [number, number]) | [number, number]
   getPointId?: ((d: unknown) => string | number) | string | number
@@ -4208,8 +4208,8 @@ interface IconClusterLayerProps extends LayerProps {
   sizeByCount?: boolean
 }
 
-export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
-  static displayName = 'IconClusterLayer'
+export class GlobalClusterLayerOp extends Operator<GlobalClusterLayerOp> {
+  static displayName = 'GlobalClusterLayer'
   static description =
     'Cluster points using Supercluster with globe visibility support. Renders clusters as circles with counts.'
   static cacheable = false
@@ -4247,13 +4247,13 @@ export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
   }
   createOutputs() {
     return {
-      layer: new LayerField<IconClusterLayerProps>(),
+      layer: new LayerField<GlobalClusterLayerProps>(),
     }
   }
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     const layer = {
-      ...parseLayerProps<IconClusterLayerProps>(props as Parameters<typeof parseLayerProps>[0]),
-      type: 'IconClusterLayer' as const,
+      ...parseLayerProps<GlobalClusterLayerProps>(props as Parameters<typeof parseLayerProps>[0]),
+      type: 'GlobalClusterLayer' as const,
       id: this.id,
       updateTriggers: gatherTriggers(this.inputs, props),
     }
@@ -6543,7 +6543,7 @@ export const opTypes = {
   HexagonLayerOp,
   HSLOp,
   HueSaturationExtensionOp,
-  IconClusterLayerOp,
+  GlobalClusterLayerOp,
   IconLayerOp,
   JSONOp,
   KmlToGeoJsonOp,
