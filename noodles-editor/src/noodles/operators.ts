@@ -3356,6 +3356,7 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
         touchZoom: new BooleanField(true),
         touchRotate: new BooleanField(true),
         keyboard: new BooleanField(true),
+        // Inertia for smooth deceleration after gestures
         inertia: new BooleanField(true),
       }, { optional: true, showByDefault: false }),
       // TODO: We need a nullable field. This should be a nullable (intentionally empty), or a compound object below.
@@ -4185,7 +4186,8 @@ export class IconLayerOp extends Operator<IconLayerOp> {
  * - Has built-in globe visibility constraints (opacity fading for back-of-globe)
  * - Renders clusters as circles with count labels, individual points when unclustered
  *
- * Note: Requires GlobalClusterLayer from @deck.gl-community/geo-layers.
+ * Note: Requires GlobalClusterLayer to be available in the consuming application's deck.gl.
+ * This layer is available in the NEW-HEAT/deck.gl fork.
  */
 interface GlobalClusterLayerProps extends LayerProps {
   data: unknown[]
@@ -4237,11 +4239,12 @@ export class GlobalClusterLayerOp extends Operator<GlobalClusterLayerOp> {
       fontFamily: new StringField('Monaco, monospace'),
       fontWeight: new StringField('bold'),
       clusterTextSize: new NumberField(16, { min: 1, max: 100 }),
-      // Parameters for WebGL settings
+      // Parameters for WebGL settings (cullMode fix for GlobeView text)
       parameters: new CompoundPropsField({
         depthTest: new BooleanField(true),
         cull: new BooleanField(true),
       }),
+      // Extensions (for consistency with other layer ops)
       extensions: new ListField(new ExtensionField()),
     }
   }
