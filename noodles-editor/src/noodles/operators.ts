@@ -385,6 +385,36 @@ export abstract class Operator<OP extends IOperator> {
     this.visibleFields.next(newSet)
   }
 
+  // Hide a field (remove from visible set)
+  hideField(name: string): void {
+    // Skip if field doesn't exist
+    if (!(name in this.inputs)) return
+    // Skip if already hidden
+    if (!this.isFieldVisible(name)) return
+
+    // Get current visible fields, or compute defaults from showByDefault
+    const current =
+      this.visibleFields.value ??
+      new Set(
+        Object.entries(this.inputs)
+          .filter(([_, field]) => field.showByDefault)
+          .map(([fieldName]) => fieldName)
+      )
+
+    const newSet = new Set(current)
+    newSet.delete(name)
+    this.visibleFields.next(newSet)
+  }
+
+  // Set field visibility (show or hide based on boolean)
+  setFieldVisibility(name: string, visible: boolean): void {
+    if (visible) {
+      this.showField(name)
+    } else {
+      this.hideField(name)
+    }
+  }
+
   // === Pull-based execution methods ===
 
   // Pull data from this operator, executing if needed (pull-based model)
@@ -1923,6 +1953,97 @@ export class TableEditorOp extends Operator<TableEditorOp> {
   execute({ data }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     // This is a special-case because it's essentially a pass-through. The TableEditor component will handle the data
     return { data }
+  }
+}
+
+export class ChartOp extends Operator<ChartOp> {
+  static displayName = 'Chart'
+  static description = 'Create charts using Observable Plot (bar, histogram, scatter)'
+
+  createInputs() {
+    const data = new DataField()
+    const chartType = new StringLiteralField('bar', { values: ['bar', 'histogram', 'scatter'] })
+    const xField = new StringLiteralField('', [])
+    const yField = new StringLiteralField('', [])
+
+    // Dynamic field population pattern (from FilterOp)
+    data.subscribe((data: unknown[]) => {
+      if (Array.isArray(data) && data.length > 0) {
+        const keys = Object.keys(data[0])
+        xField.updateChoices(keys)
+        yField.updateChoices(keys)
+      }
+    })
+
+    // Field visibility based on chart type
+    chartType.subscribe(type => {
+      // Hide yField for histogram (only needs x-axis)
+      this.setFieldVisibility('yField', type !== 'histogram')
+    })
+
+    return {
+      data,
+      chartType,
+      xField,
+      yField,
+      width: new NumberField(640, { min: 100, max: 2000, step: 10 }),
+      height: new NumberField(400, { min: 100, max: 2000, step: 10 }),
+      color: new ColorField('#4269d0'),
+      title: new StringField(''),
+      xLabel: new StringField(''),
+      yLabel: new StringField(''),
+    }
+  }
+
+  createOutputs() {
+    return {
+      // Plot.plot() returns a <figure> element containing the chart SVG
+      chart: new UnknownField(),
+    }
+  }
+
+  execute({
+    data,
+    chartType,
+    xField,
+    yField,
+    width,
+    height,
+    color,
+    title,
+    xLabel,
+    yLabel,
+  }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    // Validate inputs
+    if (!Array.isArray(data) || data.length === 0) {
+      return { chart: null }
+    }
+
+    // Build marks based on chart type
+    let marks: Plot.Markish[]
+    switch (chartType) {
+      case 'bar':
+        marks = [Plot.barY(data, { x: xField, y: yField, fill: color })]
+        break
+      case 'histogram':
+        marks = [Plot.rectY(data, Plot.binX({ y: 'count' }, { x: xField, fill: color }))]
+        break
+      case 'scatter':
+        marks = [Plot.dot(data, { x: xField, y: yField, fill: color })]
+        break
+    }
+
+    // Generate and return plot
+    const chart = Plot.plot({
+      width,
+      height,
+      title,
+      marks,
+      x: { label: xLabel || xField },
+      y: { label: yLabel || yField },
+    })
+
+    return { chart }
   }
 }
 
@@ -6394,6 +6515,7 @@ export const opTypes = {
   BrightnessContrastExtensionOp,
   BrushingExtensionOp,
   CategoricalColorRampOp,
+  ChartOp,
   ClipExtensionOp,
   CodeOp,
   CollisionFilterExtensionOp,
