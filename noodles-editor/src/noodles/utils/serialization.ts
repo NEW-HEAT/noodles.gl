@@ -14,9 +14,22 @@ import { parseHandleId } from './path-utils'
 
 export { NOODLES_VERSION } from './migrate-schema'
 
+export type AutoLayoutSettings = {
+  enabled: boolean
+  algorithm: 'dagre' | 'd3-force'
+  direction: 'LR' | 'TB'
+}
+
+export const DEFAULT_AUTO_LAYOUT: AutoLayoutSettings = {
+  enabled: false,
+  algorithm: 'dagre',
+  direction: 'LR',
+}
+
 export type EditorSettings = {
   layoutMode?: 'split' | 'noodles-on-top' | 'output-on-top'
   showOverlay?: boolean
+  autoLayout?: Partial<AutoLayoutSettings>
 }
 
 export type RenderSettings = {

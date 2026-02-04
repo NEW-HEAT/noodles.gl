@@ -58,6 +58,7 @@ import { SaveAsDialog } from './components/save-as-dialog'
 import { StorageErrorHandler } from './components/storage-error-handler'
 import { UndoRedoHandler, type UndoRedoHandlerRef } from './components/UndoRedoHandler'
 import { useActiveStorageType, useFileSystemStore } from './filesystem-store'
+import { IS_PROD } from './globals'
 import { useKeyboardShortcut } from './hooks/use-keyboard-shortcut'
 import { useNodeDropOnEdge } from './hooks/use-node-drop-on-edge'
 import { useProjectModifications } from './hooks/use-project-modifications'
@@ -67,6 +68,7 @@ import { copyDataDirectory, copyPublicFolderData, hasDataDirectory, load, save }
 import { getOp, getOpStore, getUIStore, useNestingStore, useUIStore } from './store'
 import { bindOperatorToTheatre, cleanupRemovedOperators } from './theatre-bindings'
 import { transformGraph } from './transform-graph'
+import { layoutNodes } from './utils/auto-layout'
 import { canConnect } from './utils/can-connect'
 import { directoryHandleCache } from './utils/directory-handle-cache'
 import {
@@ -79,13 +81,18 @@ import { edgeId, nodeId } from './utils/id-utils'
 import { migrateProject } from './utils/migrate-schema'
 import { getParentPath } from './utils/path-utils'
 import {
+  type AutoLayoutSettings,
+  DEFAULT_AUTO_LAYOUT,
+  DEFAULT_RENDER_SETTINGS,
   EMPTY_PROJECT,
   NOODLES_VERSION,
   type NoodlesProjectJSON,
+  type RenderSettings,
   safeStringify,
   saveProjectLocally,
   serializeEdges,
   serializeNodes,
+  serializeRenderSettings,
 } from './utils/serialization'
 import { calculateViewerPosition } from './utils/viewer-position'
 
@@ -224,6 +231,9 @@ export function getNoodles(): Visualization {
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
+  // Auto-layout settings (declared early as they're used in multiple places)
+  const [autoLayout, setAutoLayout] = useState<AutoLayoutSettings>(DEFAULT_AUTO_LAYOUT)
+
   // Wrap onNodesChange to track node selection and mark unsaved changes
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
@@ -355,13 +365,64 @@ export function getNoodles(): Visualization {
     setEdges,
   })
 
-  // Wrap onConnect to mark unsaved changes
+  const currentContainerId = useNestingStore(state => state.currentContainerId)
+
+  // Auto-layout function for current container (used by onConnect and node addition effects)
+  const applyAutoLayoutToContainer = useCallback(() => {
+    if (!autoLayout.enabled) return
+
+    // Get all nodes in the current container
+    const containerNodes = nodes.filter(node => {
+      const nodeParent = getParentPath(node.id)
+      return currentContainerId === '/' ? nodeParent === '/' : nodeParent === currentContainerId
+    })
+
+    if (containerNodes.length < 2) return
+
+    // Get edges between these nodes
+    const containerNodeIds = new Set(containerNodes.map(n => n.id))
+    const containerEdges = edges.filter(
+      e => containerNodeIds.has(e.source) && containerNodeIds.has(e.target)
+    )
+
+    // Apply layout
+    const layoutedNodes = layoutNodes(containerNodes, containerEdges, autoLayout)
+
+    // Update node positions
+    setNodes(currentNodes =>
+      currentNodes.map(node => {
+        const layoutedNode = layoutedNodes.find(n => n.id === node.id)
+        if (layoutedNode) {
+          return {
+            ...node,
+            position: layoutedNode.position,
+          }
+        }
+        return node
+      })
+    )
+
+    // Fit view to show all nodes with animation
+    setTimeout(() => {
+      reactFlowInstanceRef.current?.fitView({
+        duration: 300,
+        padding: 0.2,
+      })
+    }, 0)
+  }, [autoLayout, nodes, edges, currentContainerId, setNodes])
+
+  // Wrap onConnect to mark unsaved changes and trigger auto-layout if enabled
   const onConnect = useCallback(
     (connection: Connection) => {
       onConnectBase(connection)
       setHasUnsavedChanges(true)
+      // Trigger auto-layout after the connection is established
+      if (autoLayout.enabled) {
+        // Use setTimeout to ensure the edge is added before layout is computed
+        setTimeout(() => applyAutoLayoutToContainer(), 0)
+      }
     },
-    [onConnectBase]
+    [onConnectBase, autoLayout.enabled, applyAutoLayoutToContainer]
   )
 
   // Wrap onNodesDelete to mark unsaved changes
@@ -503,8 +564,6 @@ export function getNoodles(): Visualization {
     blockLibraryRef.current?.openModal(event.clientX, event.clientY)
   }, [])
 
-  const currentContainerId = useNestingStore(state => state.currentContainerId)
-
   // Handle 'v' keyup to create ViewerOp (momentary button behavior)
   useKeyboardShortcut('v', () => {
     analytics.track('viewer_created', { method: 'keyboard' })
@@ -611,17 +670,57 @@ export function getNoodles(): Visualization {
     blockLibraryRef.current?.openModal(centerX, centerY)
   }, [])
 
-  const [showOverlay, setShowOverlay] = useState(true)
+  // Handle Cmd+A / Ctrl+A to select all nodes in current container
+  const selectAllNodes = useCallback(
+    (e: KeyboardEvent) => {
+      e.preventDefault()
+      analytics.track('select_all_nodes')
+
+      // Select all nodes in the current container
+      setNodes(currentNodes =>
+        currentNodes.map(node => {
+          // Only select nodes that are in the current container level
+          const nodeParent = getParentPath(node.id)
+          const isInCurrentContainer =
+            currentContainerId === '/' ? nodeParent === '/' : nodeParent === currentContainerId
+
+          return {
+            ...node,
+            selected: isInCurrentContainer ? true : node.selected,
+          }
+        })
+      )
+      return false // Stop propagation
+    },
+    [setNodes, currentContainerId]
+  )
+
+  // Register platform-specific select-all shortcut
+  const isMac = useMemo(() => navigator.platform.toUpperCase().indexOf('MAC') >= 0, [])
+  useKeyboardShortcut(isMac ? 'cmd+a' : 'ctrl+a', selectAllNodes, [selectAllNodes, isMac])
+
+  // Editor settings state (moved from Theatre.js to project-level settings)
+  const [showOverlay, setShowOverlay] = useState(!IS_PROD)
   const [layoutMode, setLayoutMode] = useState<'split' | 'noodles-on-top' | 'output-on-top'>(
     'noodles-on-top'
   )
 
-  // Render settings are now stored as OutOp inputs (see migration 012)
-  // Use useRenderSettings() hook to read them
+  // Render settings state (moved from Theatre.js sheet to project-level settings)
+  const [renderSettings, setRenderSettings] = useState<RenderSettings>({
+    ...DEFAULT_RENDER_SETTINGS,
+  })
 
   const loadProjectFile = useCallback(
-    (project: NoodlesProjectJSON, name?: string, targetRoutePrefix?: string) => {
-      const { nodes, edges, viewport, timeline, editorSettings, apiKeys } = project
+    (project: NoodlesProjectJSON, name?: string) => {
+      const {
+        nodes,
+        edges,
+        viewport,
+        timeline,
+        editorSettings,
+        renderSettings: projectRenderSettings,
+        apiKeys,
+      } = project
 
       // Mark that we've programmatically loading this project BEFORE any state changes
       // This prevents the useEffect from trying to reload it from storage when the URL changes
@@ -641,9 +740,38 @@ export function getNoodles(): Visualization {
 
       // Load editor settings from project with defaults
       setLayoutMode(editorSettings?.layoutMode ?? 'noodles-on-top')
-      setShowOverlay(editorSettings?.showOverlay ?? true)
+      setShowOverlay(editorSettings?.showOverlay ?? !IS_PROD)
+      setAutoLayout({
+        ...DEFAULT_AUTO_LAYOUT,
+        ...editorSettings?.autoLayout,
+      })
 
-      // Render settings are now stored as OutOp inputs (migration 012 handles conversion)
+      // Load render settings with backwards compatibility
+      // First try the new format (renderSettings at project root)
+      // Then fall back to the legacy Theatre.js location
+      let loadedRenderSettings: RenderSettings = { ...DEFAULT_RENDER_SETTINGS }
+      if (projectRenderSettings) {
+        loadedRenderSettings = { ...DEFAULT_RENDER_SETTINGS, ...projectRenderSettings }
+      } else {
+        // Backwards compatibility: try to load from Theatre.js staticOverrides
+        const legacyRender = (
+          timeline as {
+            sheetsById?: {
+              Noodles?: {
+                staticOverrides?: {
+                  byObject?: {
+                    render?: Partial<RenderSettings>
+                  }
+                }
+              }
+            }
+          }
+        )?.sheetsById?.Noodles?.staticOverrides?.byObject?.render
+        if (legacyRender) {
+          loadedRenderSettings = { ...DEFAULT_RENDER_SETTINGS, ...legacyRender }
+        }
+      }
+      setRenderSettings(loadedRenderSettings)
 
       // Load API keys from project file if present
       getKeysStore().setProjectKeys(apiKeys)
@@ -659,8 +787,7 @@ export function getNoodles(): Visualization {
 
       // Update URL query parameter with project name
       if (name) {
-        const effectiveRoutePrefix = targetRoutePrefix ?? routePrefix
-        navigate(`${effectiveRoutePrefix}/${name}`, { replace: true })
+        navigate(`${routePrefix}/${name ?? ''}`, { replace: true })
       }
 
       // Clear unsaved changes flag when loading a project
@@ -786,7 +913,13 @@ export function getNoodles(): Visualization {
     const timeline = getTimelineJson()
     const viewport = reactFlowInstanceRef.current?.getViewport() || { x: 0, y: 0, zoom: 1 }
     const projectKeys = getKeysForProject()
-    // Render settings are now stored as OutOp inputs, serialized with the node
+    const serializedRenderSettings = serializeRenderSettings(renderSettings)
+
+    // Only include autoLayout if different from defaults
+    const autoLayoutChanged =
+      autoLayout.enabled !== DEFAULT_AUTO_LAYOUT.enabled ||
+      autoLayout.algorithm !== DEFAULT_AUTO_LAYOUT.algorithm ||
+      autoLayout.direction !== DEFAULT_AUTO_LAYOUT.direction
 
     return {
       version: NOODLES_VERSION,
@@ -797,10 +930,12 @@ export function getNoodles(): Visualization {
       editorSettings: {
         layoutMode,
         showOverlay,
+        ...(autoLayoutChanged ? { autoLayout } : {}),
       },
+      ...(serializedRenderSettings ? { renderSettings: serializedRenderSettings } : {}),
       ...(projectKeys ? { apiKeys: projectKeys } : {}),
     }
-  }, [nodes, edges, getTimelineJson, layoutMode, showOverlay])
+  }, [nodes, edges, getTimelineJson, layoutMode, showOverlay, renderSettings, autoLayout])
 
   const onMenuSave = useCallback(async () => {
     if (!projectName) return
@@ -1030,6 +1165,60 @@ export function getNoodles(): Visualization {
     blockLibraryRef.current?.openModal(centerX, centerY)
   }, [])
 
+  // Auto-layout callback for selected nodes
+  const onAutoLayout = useCallback(() => {
+    const selectedNodes = nodes.filter(n => n.selected)
+    if (selectedNodes.length < 3) return
+
+    // Get edges that connect the selected nodes
+    const selectedNodeIds = new Set(selectedNodes.map(n => n.id))
+    const relevantEdges = edges.filter(
+      e => selectedNodeIds.has(e.source) && selectedNodeIds.has(e.target)
+    )
+
+    // Apply layout
+    const layoutedNodes = layoutNodes(selectedNodes, relevantEdges, autoLayout)
+
+    // Update node positions with animation
+    setNodes(currentNodes =>
+      currentNodes.map(node => {
+        const layoutedNode = layoutedNodes.find(n => n.id === node.id)
+        if (layoutedNode) {
+          return {
+            ...node,
+            position: layoutedNode.position,
+          }
+        }
+        return node
+      })
+    )
+
+    // Fit view to show all layouted nodes with animation
+    setTimeout(() => {
+      reactFlowInstanceRef.current?.fitView({
+        nodes: selectedNodes,
+        duration: 300,
+        padding: 0.2,
+      })
+    }, 0)
+  }, [nodes, edges, autoLayout, setNodes])
+
+  // Track previous node count to detect additions
+  const prevNodeCountRef = useRef(nodes.length)
+
+  // Auto-layout when nodes are added (if enabled)
+  useEffect(() => {
+    const currentCount = nodes.length
+    const prevCount = prevNodeCountRef.current
+    prevNodeCountRef.current = currentCount
+
+    // Only trigger if nodes were added (not removed) and auto-layout is enabled
+    if (autoLayout.enabled && currentCount > prevCount && currentCount >= 2) {
+      // Use setTimeout to ensure React Flow has processed the new node
+      setTimeout(() => applyAutoLayoutToContainer(), 50)
+    }
+  }, [nodes.length, autoLayout.enabled, applyAutoLayoutToContainer])
+
   const onNewProject = useCallback(async () => {
     try {
       // Prompt user to select/create a directory for the new project
@@ -1053,13 +1242,11 @@ export function getNoodles(): Visualization {
       // Cache the directory handle
       await directoryHandleCache.cacheHandle(directoryName, directoryHandle, directoryHandle.name)
 
-      // Update store with directory handle and storage type
+      // Update store with directory handle
       setCurrentDirectory(directoryHandle, directoryName)
-      setActiveStorageType('fileSystemAccess')
 
       // Load the project directly (already in memory, no need to reload from disk)
-      // Always navigate to /projects since this is a user project
-      loadProjectFile(starterProject, directoryName, '/projects')
+      loadProjectFile(starterProject, directoryName)
 
       analytics.track('project_created', { method: 'new' })
     } catch (error) {
@@ -1069,7 +1256,7 @@ export function getNoodles(): Visualization {
       }
       console.error('Failed to create new project:', error)
     }
-  }, [setCurrentDirectory, setActiveStorageType, loadProjectFile])
+  }, [setCurrentDirectory, loadProjectFile])
 
   const onImport = useCallback(async () => {
     try {
@@ -1095,25 +1282,16 @@ export function getNoodles(): Visualization {
         // Handle ZIP import
         const zip = await JSZip.loadAsync(await file.arrayBuffer())
 
-        // Find the shallowest noodles.json in the ZIP (could be at root or in a subfolder)
-        // We want the project root, not a noodles.json that might be in a data subfolder
+        // Find noodles.json in the ZIP (could be at root or in a subfolder)
         let noodlesJsonPath: string | null = null
         let projectFolder = ''
 
-        // Iterate over files in the ZIP to find the shallowest noodles.json
+        // Iterate over files in the ZIP to find noodles.json
         zip.forEach((relativePath, zipEntry) => {
           if (relativePath.endsWith('noodles.json') && !zipEntry.dir) {
+            noodlesJsonPath = relativePath
             // Extract the folder path (everything before noodles.json)
-            const folder = relativePath.substring(0, relativePath.lastIndexOf('noodles.json'))
-            // Keep this one if it's the first found, or if it's shallower (fewer path segments)
-            const currentDepth = noodlesJsonPath
-              ? projectFolder.split('/').filter(Boolean).length
-              : Infinity
-            const newDepth = folder.split('/').filter(Boolean).length
-            if (newDepth < currentDepth) {
-              noodlesJsonPath = relativePath
-              projectFolder = folder
-            }
+            projectFolder = relativePath.substring(0, relativePath.lastIndexOf('noodles.json'))
           }
         })
 
@@ -1212,13 +1390,11 @@ export function getNoodles(): Visualization {
       // Cache the directory handle
       await directoryHandleCache.cacheHandle(directoryName, directoryHandle, directoryHandle.name)
 
-      // Update store with directory handle and storage type
+      // Update store with directory handle
       setCurrentDirectory(directoryHandle, directoryName)
-      setActiveStorageType('fileSystemAccess')
 
       // Load the project directly (already in memory, no need to reload from disk)
-      // Always navigate to /projects since this is a user project
-      loadProjectFile(projectData, directoryName, '/projects')
+      loadProjectFile(projectData, directoryName)
 
       analytics.track('project_imported', { format: isZip ? 'zip' : 'json' })
     } catch (error) {
@@ -1228,7 +1404,7 @@ export function getNoodles(): Visualization {
       }
       console.error('Failed to import project:', error)
     }
-  }, [setCurrentDirectory, setActiveStorageType, loadProjectFile])
+  }, [setCurrentDirectory, loadProjectFile])
 
   // Handlers for ExampleNotFoundDialog
   const onBrowseExamples = useCallback(() => {
@@ -1250,12 +1426,12 @@ export function getNoodles(): Visualization {
         let finalProjectName: string
 
         if (projectName) {
-          // Load project by name (for recent projects)
-          // Recent projects from directoryHandleCache are always fileSystemAccess
+          // Load project by name (for recent projects and OPFS list)
+          // Cache-aware: load will prompt user if project directory not cached for fileSystemAccess
           finalProjectName = projectName
-          result = await load('fileSystemAccess', projectName)
+          result = await load(storageType, projectName)
         } else {
-          // Show the native folder picker (File System Access API)
+          // Show the native folder picker
           const projectDirectory = await selectDirectory()
           finalProjectName = projectDirectory.name
 
@@ -1267,24 +1443,18 @@ export function getNoodles(): Visualization {
           )
 
           // Load project from the selected directory
-          result = await load('fileSystemAccess', projectDirectory)
+          result = await load(storageType, projectDirectory)
         }
 
         if (result.success) {
           const project = await migrateProject(result.data.projectData)
-          // Always navigate to /projects since this is a user project
-          loadProjectFile(project, finalProjectName, '/projects')
+          loadProjectFile(project, finalProjectName)
           // Update store with directory handle returned from load
           setCurrentDirectory(result.data.directoryHandle, finalProjectName)
-          // Set storage type to fileSystemAccess since we used File System Access API
-          setActiveStorageType('fileSystemAccess')
-          analytics.track('project_opened', { storageType: 'fileSystemAccess' })
+          analytics.track('project_opened', { storageType })
         } else {
           setError(result.error)
-          analytics.track('project_open_failed', {
-            storageType: 'fileSystemAccess',
-            error: 'load_error',
-          })
+          analytics.track('project_open_failed', { storageType, error: 'load_error' })
         }
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
@@ -1302,12 +1472,12 @@ export function getNoodles(): Visualization {
           originalError: error,
         })
         analytics.track('project_open_failed', {
-          storageType: 'fileSystemAccess',
+          storageType,
           error: projectName ? 'migration_error' : 'unknown',
         })
       }
     },
-    [loadProjectFile, setCurrentDirectory, setActiveStorageType, setError]
+    [storageType, loadProjectFile, setCurrentDirectory, setError]
   )
 
   const flowGraph = theatreReady && (
@@ -1355,8 +1525,7 @@ export function getNoodles(): Visualization {
           projectName={projectName || ''}
           open={showProjectNotFoundDialog}
           onProjectLoaded={(project, name) => {
-            // Always navigate to /projects since this is a user project
-            loadProjectFile(project, name, '/projects')
+            loadProjectFile(project, name)
             setShowProjectNotFoundDialog(false)
           }}
           onNewProject={onNewProject}
@@ -1496,7 +1665,7 @@ export function getNoodles(): Visualization {
 
   const propertiesPanel = (
     <div className={s.rightPanel}>
-      <PropertyPanel />
+      <PropertyPanel onAutoLayout={onAutoLayout} autoLayout={autoLayout} />
     </div>
   )
 
@@ -1505,10 +1674,14 @@ export function getNoodles(): Visualization {
     nodeSidebar: <NodeTreeSidebar updateOperatorId={updateOperatorId} />,
     propertiesPanel,
     layoutMode,
+    setLayoutMode,
     showOverlay,
-    onChangeLayoutMode: setLayoutMode,
-    onChangeShowOverlay: setShowOverlay,
-    // Render settings are now read from OutOp via useRenderSettings() hook
+    setShowOverlay,
+    renderSettings,
+    setRenderSettings,
+    // Auto-layout props (for settings menu)
+    autoLayout,
+    setAutoLayout,
     // Export these so timeline-editor can create the menu with render actions
     projectName,
     getTimelineJson,
@@ -1524,7 +1697,7 @@ export function getNoodles(): Visualization {
     copyControlsRef,
     reactFlowRef,
     showChatPanel,
-    onChangeShowChatPanel: setShowChatPanel,
+    setShowChatPanel,
     hasUnsavedChanges,
     ...visProps,
     project: theatreProject,
