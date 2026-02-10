@@ -255,10 +255,12 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
       sourceHandle: string
       targetHandle: string
     }>
+    pipelineId?: string
     options?: { validateFirst?: boolean; autoConnect?: boolean }
   }
 
   try {
+    let pipelineId = ''
     let nodes: Array<{
       id: string
       type: string
@@ -273,15 +275,12 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
       targetHandle: string
     }> = []
 
-    // Check for nodes/edges - can be at top level or inside spec
-    const inputNodes = payload.nodes || (payload.spec as { nodes?: unknown })?.nodes
-    const inputEdges = payload.edges || (payload.spec as { edges?: unknown })?.edges
-
-    // Check if using direct nodes/edges format
-    if (inputNodes && Array.isArray(inputNodes)) {
+    // Disambiguate: direct format uses top-level nodes/edges,
+    // high-level format uses spec.dataSource/transformations/output.
+    if (payload.nodes && Array.isArray(payload.nodes)) {
       // Direct format - use nodes and edges as provided
       nodes = (
-        inputNodes as Array<{
+        payload.nodes as Array<{
           id: string
           type: string
           position?: { x: number; y: number }
@@ -295,7 +294,7 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
       }))
 
       edges = (
-        (inputEdges || []) as Array<{
+        (payload.edges || []) as Array<{
           id?: string
           source: string
           target: string
@@ -309,6 +308,8 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
         sourceHandle: e.sourceHandle,
         targetHandle: e.targetHandle,
       }))
+      // Caller can specify which node represents the pipeline output
+      pipelineId = payload.pipelineId || nodes[nodes.length - 1]?.id || 'unknown'
     } else if (payload.spec?.dataSource) {
       // High-level spec format - convert to nodes/edges
       const spec = payload.spec as {
@@ -362,6 +363,7 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
         data: { inputs: spec.output.config },
       }
       nodes.push(outputNode)
+      pipelineId = outputNode.id
 
       if (options?.autoConnect !== false && previousNodeId) {
         edges.push({
@@ -389,14 +391,13 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
     }
 
     // Send response
-    const lastNodeId = nodes[nodes.length - 1]?.id || 'unknown'
     sendToWorker(
       createMessage(
         MessageType.TOOL_RESPONSE,
         {
           tool: 'createPipeline',
           result: {
-            pipelineId: lastNodeId,
+            pipelineId,
             nodes: nodes.map(n => n.id),
             edges: edges.map(e => e.id),
           },
