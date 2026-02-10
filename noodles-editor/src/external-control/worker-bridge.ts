@@ -28,20 +28,15 @@ const eventHandlers = new Map<string, Set<(data: unknown) => void>>()
 // Tool executor instance
 let toolExecutor: MCPTools | null = null
 
-// Check if running in development mode (localhost)
-const isDevMode = (): boolean => {
-  return (
+// Helper to check if message type requires authentication.
+// Auth is skipped on localhost since external control connections are already local
+// and auth tokens require production setup. Use `?externalControl=true` to enable.
+const requiresAuth = (type: MessageType): boolean => {
+  const isLocalhost =
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  )
-}
 
-// Helper to check if message type requires authentication
-const requiresAuth = (type: MessageType): boolean => {
-  // Skip auth in development mode for easier testing
-  if (isDevMode()) {
-    return false
-  }
+  if (isLocalhost) return false
 
   // These message types don't require auth
   const publicTypes = [
@@ -247,14 +242,36 @@ const executeTool = async (
 const handlePipelineCreate = async (message: PipelineCreateMessage) => {
   const payload = message.payload as {
     spec?: { dataSource?: unknown; transformations?: unknown[]; output?: unknown }
-    nodes?: Array<{ id: string; type: string; position?: { x: number; y: number }; data?: { inputs?: Record<string, unknown> } }>
-    edges?: Array<{ id?: string; source: string; target: string; sourceHandle: string; targetHandle: string }>
+    nodes?: Array<{
+      id: string
+      type: string
+      position?: { x: number; y: number }
+      data?: { inputs?: Record<string, unknown> }
+    }>
+    edges?: Array<{
+      id?: string
+      source: string
+      target: string
+      sourceHandle: string
+      targetHandle: string
+    }>
     options?: { validateFirst?: boolean; autoConnect?: boolean }
   }
 
   try {
-    let nodes: Array<{ id: string; type: string; position: { x: number; y: number }; data: { inputs: Record<string, unknown> } }> = []
-    let edges: Array<{ id: string; source: string; target: string; sourceHandle: string; targetHandle: string }> = []
+    let nodes: Array<{
+      id: string
+      type: string
+      position: { x: number; y: number }
+      data: { inputs: Record<string, unknown> }
+    }> = []
+    let edges: Array<{
+      id: string
+      source: string
+      target: string
+      sourceHandle: string
+      targetHandle: string
+    }> = []
 
     // Check for nodes/edges - can be at top level or inside spec
     const inputNodes = payload.nodes || (payload.spec as { nodes?: unknown })?.nodes
@@ -263,14 +280,29 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
     // Check if using direct nodes/edges format
     if (inputNodes && Array.isArray(inputNodes)) {
       // Direct format - use nodes and edges as provided
-      nodes = (inputNodes as Array<{ id: string; type: string; position?: { x: number; y: number }; data?: { inputs?: Record<string, unknown> } }>).map(n => ({
+      nodes = (
+        inputNodes as Array<{
+          id: string
+          type: string
+          position?: { x: number; y: number }
+          data?: { inputs?: Record<string, unknown> }
+        }>
+      ).map(n => ({
         id: n.id,
         type: n.type,
         position: n.position || { x: 100, y: 100 },
         data: { inputs: n.data?.inputs || {} },
       }))
 
-      edges = ((inputEdges || []) as Array<{ id?: string; source: string; target: string; sourceHandle: string; targetHandle: string }>).map(e => ({
+      edges = (
+        (inputEdges || []) as Array<{
+          id?: string
+          source: string
+          target: string
+          sourceHandle: string
+          targetHandle: string
+        }>
+      ).map(e => ({
         id: e.id || `${e.source}.${e.sourceHandle}->${e.target}.${e.targetHandle}`,
         source: e.source,
         target: e.target,
@@ -279,7 +311,11 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
       }))
     } else if (payload.spec?.dataSource) {
       // High-level spec format - convert to nodes/edges
-      const spec = payload.spec as { dataSource: { type: string; config: Record<string, unknown> }; transformations: Array<{ type: string; config: Record<string, unknown> }>; output: { type: string; config: Record<string, unknown> } }
+      const spec = payload.spec as {
+        dataSource: { type: string; config: Record<string, unknown> }
+        transformations: Array<{ type: string; config: Record<string, unknown> }>
+        output: { type: string; config: Record<string, unknown> }
+      }
       const options = payload.options
       let yPosition = 100
 
@@ -337,7 +373,9 @@ const handlePipelineCreate = async (message: PipelineCreateMessage) => {
         })
       }
     } else {
-      throw new Error('Invalid pipeline spec: must provide either nodes/edges or spec with dataSource/transformations/output')
+      throw new Error(
+        'Invalid pipeline spec: must provide either nodes/edges or spec with dataSource/transformations/output'
+      )
     }
 
     // Apply modifications to create the pipeline
