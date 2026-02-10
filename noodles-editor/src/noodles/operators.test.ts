@@ -697,6 +697,47 @@ describe('DeckRendererOp', () => {
       pitch: 30,
     })
   })
+
+  it('omits controller from deckProps by default', () => {
+    const operator = new DeckRendererOp('/deck-0')
+    const {
+      vis: { deckProps },
+    } = operator.execute({
+      layers: [],
+      effects: [],
+      views: [],
+      layerFilter: () => true,
+    })
+    expect(deckProps).not.toHaveProperty('controller')
+  })
+
+  it('includes controller in deckProps when explicitly enabled', () => {
+    const operator = new DeckRendererOp('/deck-0')
+    const {
+      vis: { deckProps },
+    } = operator.execute({
+      layers: [],
+      effects: [],
+      views: [],
+      layerFilter: () => true,
+      controller: true,
+    })
+    expect(deckProps.controller).toBe(true)
+  })
+
+  it('omits controller when set to false', () => {
+    const operator = new DeckRendererOp('/deck-0')
+    const {
+      vis: { deckProps },
+    } = operator.execute({
+      layers: [],
+      effects: [],
+      views: [],
+      layerFilter: () => true,
+      controller: false,
+    })
+    expect(deckProps).not.toHaveProperty('controller')
+  })
 })
 
 describe('MapViewOp', () => {
@@ -706,6 +747,18 @@ describe('MapViewOp', () => {
       clearColor: [127.5, 0, 127.5, 255],
     })
     expect(view.props.clearColor).toEqual([127.5, 0, 127.5, 255])
+  })
+
+  it('defaults controller to falsy', () => {
+    const operator = new MapViewOp('/map-0')
+    const { view } = operator.execute({})
+    expect(view.props.controller).toBeFalsy()
+  })
+
+  it('passes controller through when enabled', () => {
+    const operator = new MapViewOp('/map-0')
+    const { view } = operator.execute({ controller: true })
+    expect(view.props.controller).toBe(true)
   })
 })
 
