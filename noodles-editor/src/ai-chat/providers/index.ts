@@ -17,10 +17,10 @@ export type {
   AIToolDefinition,
   AIToolCall,
   AIToolResult,
+  AIToolResultMessage,
   ProviderPreference,
 } from './types'
 
-import type { KeysConfig } from '../../noodles/keys-store'
 import { AnthropicProvider } from './anthropic-provider'
 import { OpenAIProvider } from './openai-provider'
 import type { AIProvider, ProviderPreference } from './types'

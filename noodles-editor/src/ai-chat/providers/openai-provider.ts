@@ -55,7 +55,14 @@ export class OpenAIProvider implements AIProvider {
   }
 
   async send(params: AISendParams): Promise<AIResponse> {
-    const { system, messages, tools, maxTokens = DEFAULT_MAX_TOKENS } = params
+    const {
+      system,
+      messages,
+      tools,
+      maxTokens = DEFAULT_MAX_TOKENS,
+      continuationNativeContent,
+      toolResults,
+    } = params
 
     // Build OpenAI-format messages
     const oaiMessages: OAIMessage[] = [
@@ -64,6 +71,24 @@ export class OpenAIProvider implements AIProvider {
         .filter(m => m.role !== 'system')
         .map(m => toOAIMessage(m)),
     ]
+
+    // Append continuation messages when continuing a tool-use turn.
+    // OpenAI requires: assistant message with tool_calls, then individual tool messages.
+    if (continuationNativeContent && toolResults?.length) {
+      const nativeToolCalls = continuationNativeContent as OAIToolCall[]
+      oaiMessages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: nativeToolCalls,
+      })
+      for (const r of toolResults) {
+        oaiMessages.push({
+          role: 'tool',
+          content: r.content,
+          tool_call_id: r.toolCallId,
+        })
+      }
+    }
 
     // Build OpenAI-format tools
     const oaiTools: OAITool[] | undefined = tools?.map(toOAITool)
@@ -188,7 +213,8 @@ function parseOAIResponse(data: OAICompletionResponse): AIResponse {
   }
 
   const text = choice.message.content ?? ''
-  const toolCalls: AIToolCall[] = (choice.message.tool_calls ?? []).map(tc => ({
+  const rawToolCalls = choice.message.tool_calls ?? []
+  const toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
     id: tc.id,
     name: tc.function.name,
     input: JSON.parse(tc.function.arguments),
@@ -207,6 +233,9 @@ function parseOAIResponse(data: OAICompletionResponse): AIResponse {
     text,
     toolCalls,
     stopReason,
+    // Store native tool_calls so AIClient can build correct OpenAI continuation messages.
+    // OpenAI requires the original tool_calls array in the continuation assistant message.
+    nativeContent: rawToolCalls.length > 0 ? rawToolCalls : undefined,
     usage: data.usage
       ? {
           inputTokens: data.usage.prompt_tokens,

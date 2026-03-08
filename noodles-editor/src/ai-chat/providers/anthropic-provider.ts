@@ -21,7 +21,8 @@ export class AnthropicProvider implements AIProvider {
   readonly id = 'anthropic' as const
   readonly model: string
 
-  private client: Anthropic
+  // Exposed for compaction — compactConversation() requires a raw Anthropic SDK client
+  readonly client: Anthropic
 
   constructor(apiKey: string, model?: string) {
     this.model = model ?? DEFAULT_MODEL
@@ -29,7 +30,14 @@ export class AnthropicProvider implements AIProvider {
   }
 
   async send(params: AISendParams): Promise<AIResponse> {
-    const { system, messages, tools, maxTokens = DEFAULT_MAX_TOKENS } = params
+    const {
+      system,
+      messages,
+      tools,
+      maxTokens = DEFAULT_MAX_TOKENS,
+      continuationNativeContent,
+      toolResults,
+    } = params
 
     // Convert generic messages to Anthropic format
     const anthropicMessages: Anthropic.MessageParam[] = messages
@@ -53,6 +61,25 @@ export class AnthropicProvider implements AIProvider {
               return { type: 'text' as const, text: '' }
             }),
       }))
+
+    // Append continuation messages when continuing a tool-use turn.
+    // Anthropic requires: assistant message with tool_use blocks, then user message with tool_result blocks.
+    if (continuationNativeContent && toolResults?.length) {
+      // Assistant message reproduces the original response content (text + tool_use blocks)
+      anthropicMessages.push({
+        role: 'assistant',
+        content: continuationNativeContent as Anthropic.ContentBlock[],
+      })
+      // User message provides tool results in the required Anthropic format
+      anthropicMessages.push({
+        role: 'user',
+        content: toolResults.map(r => ({
+          type: 'tool_result' as const,
+          tool_use_id: r.toolCallId,
+          content: r.content,
+        })),
+      })
+    }
 
     // Convert generic tools to Anthropic format
     const anthropicTools: Anthropic.Tool[] | undefined = tools?.map(toAnthropicTool)
@@ -112,6 +139,10 @@ function parseAnthropicResponse(response: Anthropic.Message): AIResponse {
     text,
     toolCalls,
     stopReason,
+    // Store native content so AIClient can build correct continuation messages.
+    // Anthropic requires the original content array (text + tool_use blocks) in the
+    // continuation assistant message — we cannot reconstruct it from toolCalls alone.
+    nativeContent: response.content,
     usage: {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,

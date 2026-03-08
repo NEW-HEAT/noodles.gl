@@ -51,6 +51,17 @@ export interface AIResponse {
     cacheReadTokens?: number
     cacheWriteTokens?: number
   }
+  /**
+   * Provider-native response content — used to build correct continuation messages.
+   * Anthropic: Anthropic.ContentBlock[]
+   * OpenAI: { tool_calls?: OAIToolCall[] }
+   */
+  nativeContent?: unknown
+}
+
+export interface AIToolResultMessage {
+  toolCallId: string
+  content: string
 }
 
 export interface AISendParams {
@@ -58,6 +69,14 @@ export interface AISendParams {
   messages: AIMessage[]
   tools?: AIToolDefinition[]
   maxTokens?: number
+  /**
+   * Provider-native continuation messages to prepend (for multi-turn tool use).
+   * When provided, these are inserted after `messages` and before the tool results.
+   * Format is provider-specific — use the value from `AIResponse.nativeContent`.
+   */
+  continuationNativeContent?: unknown
+  /** Tool results to append as a continuation turn (paired with continuationNativeContent) */
+  toolResults?: AIToolResultMessage[]
 }
 
 /**

@@ -92,19 +92,23 @@ export class AIClient {
         `(~${estimateConversationTokens(limitedHistory)} tokens)`,
       )
       try {
-        // Use compaction provider if available, otherwise skip
-        // (compaction uses Anthropic SDK directly — future: make it provider-agnostic)
-        if (this.compactionProvider?.id === 'anthropic' || this.provider.id === 'anthropic') {
-          const Anthropic = (await import('@anthropic-ai/sdk')).default
-          // Get the key from the provider (we trust the caller validated it)
-          limitedHistory = await compactConversation(
-            // compactConversation expects an Anthropic client instance
-            // For now, only works with Anthropic provider
-            new Anthropic({ apiKey: '', dangerouslyAllowBrowser: true }),
-            limitedHistory,
-            this.provider.model,
-            2,
-          )
+        // Compaction uses Anthropic SDK directly. Use the compaction provider when
+        // available (e.g. when primary is OpenAI but Anthropic key is also present),
+        // otherwise only compact when Anthropic is the active provider.
+        const compactionSource = this.compactionProvider ?? (this.provider.id === 'anthropic' ? this.provider : null)
+        if (compactionSource) {
+          // compactConversation needs a raw Anthropic SDK client.
+          // Extract via duck-typing — AnthropicProvider exposes .client as a readonly property.
+          // biome-ignore lint/suspicious/noExplicitAny: duck-typed access to provider internals
+          const rawClient = (compactionSource as any).client
+          if (rawClient) {
+            limitedHistory = await compactConversation(
+              rawClient,
+              limitedHistory,
+              compactionSource.model,
+              2,
+            )
+          }
         }
       } catch (error) {
         console.error('[AIClient] Compaction failed, using truncated history:', error)
@@ -185,7 +189,7 @@ export class AIClient {
           toolCalls.push({ name: tc.name, params: tc.input as any, result })
         }
 
-        // Strip screenshots from results
+        // Strip screenshots from results to avoid token overflow
         let sanitized = result
         if (result.success && result.data && 'screenshot' in (result.data as any)) {
           const data = { ...(result.data as any) }
@@ -199,30 +203,24 @@ export class AIClient {
         })
       }
 
-      // Collect text from this response
+      // Collect any text emitted before the tool calls
       if (response.text) finalText += response.text
 
-      // Build continuation messages
-      // For Anthropic: assistant message with tool_use blocks, then user message with tool_result blocks
-      // For OpenAI: assistant message with tool_calls, then tool messages
-      // The provider handles the format internally — we just send the generic format
-      messages.push({
-        role: 'assistant' as const,
-        content: response.text || `[Tool calls: ${response.toolCalls.map(t => t.name).join(', ')}]`,
-      })
-
-      // Add tool results as user message
-      messages.push({
-        role: 'user' as const,
-        content: toolResults.map(r => `Tool result (${r.toolCallId}): ${r.content}`).join('\n') as any,
-      })
-
-      // Continue
+      // Continue with provider-native continuation format.
+      // Each provider (Anthropic / OpenAI) has different requirements for multi-turn tool use:
+      // - Anthropic: assistant message must reproduce the original content[] blocks (text + tool_use),
+      //   followed by a user message with tool_result blocks.
+      // - OpenAI: assistant message with tool_calls array, followed by individual tool role messages.
+      //
+      // We pass the native content back to the provider via continuationNativeContent so it can
+      // construct the correct API messages without the AIClient needing to know the format.
       response = await this.provider.send({
         system: systemPromptTemplate,
         messages: messages as any,
         tools,
         maxTokens: AIClient.MAX_TOKENS,
+        continuationNativeContent: response.nativeContent,
+        toolResults,
       })
     }
 
