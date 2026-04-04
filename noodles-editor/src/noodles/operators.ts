@@ -1794,8 +1794,12 @@ const duckDbInstance = (async () => {
     }
   }
 
-  // Select a bundle based on browser checks
-  const bundle = await duckdb.selectBundle(bundles)
+  // Exclude the wasm_threads (coi) bundle — the spatial extension binary for
+  // wasm_threads has a shared-memory mismatch (declared=0, imported=1) that
+  // causes a hard LinkError.  The eh build is fully capable for our needs.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { coi: _coi, ...nonThreadedBundles } = bundles
+  const bundle = await duckdb.selectBundle(nonThreadedBundles)
   const workerUrl = bundle.mainWorker!
 
   // Handle cross-origin URLs by fetching and creating blob URL
