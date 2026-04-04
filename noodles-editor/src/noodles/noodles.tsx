@@ -23,16 +23,16 @@ import {
 import cx from 'classnames'
 import type { LayerExtension } from 'deck.gl'
 import * as deck from 'deck.gl'
-import JSZip, { type JSZipObject } from 'jszip'
+import type { JSZipObject } from 'jszip'
 import { PrimeReactProvider } from 'primereact/api'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'wouter'
-import { ChatPanel } from '../ai-chat/chat-panel'
 import { globalContextManager } from '../ai-chat/global-context-manager'
 import { getPendingQuickStartAction } from '../components/quick-start-modal'
 import { analytics } from '../utils/analytics'
 import { getKeysForProject, getKeysStore } from './keys-store'
 import newProjectJSON from './new.json'
+import { LegendWidget, type LegendWidgetProps } from './widgets/legend-widget'
 
 // Get URLs for all example noodles.json files (lazy-loaded)
 const exampleProjectUrls = import.meta.glob('../examples/**/noodles.json', {
@@ -64,6 +64,7 @@ import { SaveAsDialog } from './components/save-as-dialog'
 import { StorageErrorHandler } from './components/storage-error-handler'
 import { UndoRedoHandler, type UndoRedoHandlerRef } from './components/UndoRedoHandler'
 import { useActiveStorageType, useFileSystemStore } from './filesystem-store'
+import { findEdgeAtPosition, useConnectionDropOnEdge } from './hooks/use-connection-drop-on-edge'
 import { useKeyboardShortcut } from './hooks/use-keyboard-shortcut'
 import { useNodeDropOnEdge } from './hooks/use-node-drop-on-edge'
 import { useProjectModifications } from './hooks/use-project-modifications'
@@ -79,7 +80,7 @@ import {
   useUIStore,
 } from './store'
 import { transformGraph } from './transform-graph'
-import { canConnect } from './utils/can-connect'
+import { canConnectCached } from './utils/can-connect'
 import { directoryHandleCache } from './utils/directory-handle-cache'
 import {
   fileExists,
@@ -89,7 +90,8 @@ import {
 } from './utils/filesystem'
 import { edgeId, nodeId } from './utils/id-utils'
 import { migrateProject } from './utils/migrate-schema'
-import { getParentPath } from './utils/path-utils'
+import { getParentPath, parseHandleId } from './utils/path-utils'
+import { applyOperatorInputs, getLastCommittedBeforeState } from './utils/property-history'
 import {
   EMPTY_PROJECT,
   NOODLES_VERSION,
@@ -100,6 +102,8 @@ import {
   serializeNodes,
 } from './utils/serialization'
 import { calculateViewerPosition } from './utils/viewer-position'
+
+const ChatPanel = lazy(() => import('../ai-chat/chat-panel').then(m => ({ default: m.ChatPanel })))
 
 /*
  * CSS Architecture:
@@ -168,11 +172,10 @@ export function getNoodles(): Visualization {
   const storageType = useActiveStorageType()
   const { currentDirectory, setCurrentDirectory, setActiveStorageType, setError } =
     useFileSystemStore()
-  const getTimelineJson = useCallback(
-    (): Record<string, unknown> =>
-      getTimelineStore().toTheatreJSON() as unknown as Record<string, unknown>,
-    []
-  )
+  const timelineStore = getTimelineStore()
+  const getTimelineJson = useCallback((): Record<string, unknown> => {
+    return timelineStore.toTheatreJSON() as unknown as Record<string, unknown>
+  }, [timelineStore.toTheatreJSON])
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<AnyNodeJSON>([])
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<ReactFlowEdge<unknown>>([])
@@ -218,12 +221,17 @@ export function getNoodles(): Visualization {
     [onEdgesChangeBase]
   )
 
-  // Eagerly start loading AI context bundles on app start
+  const contextLoadStarted = useRef(false)
+
+  // Start loading AI context bundles when the chat panel is first opened
   useEffect(() => {
-    globalContextManager.startLoading().catch(error => {
-      debugApp('Failed to preload AI context:', error)
-    })
-  }, [])
+    if (showChatPanel && !contextLoadStarted.current) {
+      contextLoadStarted.current = true
+      globalContextManager.startLoading().catch(error => {
+        debugApp('Failed to preload AI context:', error)
+      })
+    }
+  }, [showChatPanel])
 
   // Warn before leaving page with unsaved changes
   useEffect(() => {
@@ -341,6 +349,8 @@ export function getNoodles(): Visualization {
 
   // Track connection drag state for dimming unconnectable nodes
   const setConnectionDragState = useUIStore(state => state.setConnectionDragState)
+  const connectionDragState = useUIStore(state => state.connectionDragState)
+  const setTargetedEdge = useUIStore(state => state.setTargetedEdge)
   const onConnectStart: OnConnectStart = useCallback(
     (_event, params) => {
       if (!params.nodeId || !params.handleId) return
@@ -368,8 +378,8 @@ export function getNoodles(): Visualization {
         const targetFields = isOutput ? op.inputs : op.outputs
         for (const targetField of Object.values(targetFields)) {
           const compatible = isOutput
-            ? canConnect(sourceField, targetField)
-            : canConnect(targetField, sourceField)
+            ? canConnectCached(sourceField, targetField)
+            : canConnectCached(targetField, sourceField)
           if (compatible) {
             compatibleNodeIds.add(nodeId)
             break
@@ -377,18 +387,74 @@ export function getNoodles(): Visualization {
         }
       }
 
+      // Calculate which existing edges the dragged source is compatible with (computed once,
+      // used to vary hit area size and highlight style during mousemove)
+      const compatibleEdgeIds = new Set<string>()
+      for (const edge of edges) {
+        if (edge.type === 'ReferenceEdge') continue
+        if (edge.source === params.nodeId || edge.target === params.nodeId) continue
+        const targetHandleInfo = parseHandleId(edge.targetHandle || '')
+        if (!targetHandleInfo) continue
+        const targetOp = getOp(edge.target)
+        if (!targetOp) continue
+        const targetField = targetOp.inputs[targetHandleInfo.fieldName]
+        if (!targetField) continue
+        const compatible = isOutput
+          ? canConnectCached(sourceField, targetField)
+          : canConnectCached(targetField, sourceField)
+        if (compatible) compatibleEdgeIds.add(edge.id)
+      }
+
       setConnectionDragState({
         sourceNodeId: params.nodeId,
         sourceHandleId: params.handleId,
         compatibleNodeIds,
+        compatibleEdgeIds,
       })
     },
-    [setConnectionDragState]
+    [setConnectionDragState, edges]
   )
 
-  const onConnectEnd: OnConnectEnd = useCallback(() => {
-    setConnectionDragState(null)
-  }, [setConnectionDragState])
+  const { onConnectEnd: onConnectionDropEnd } = useConnectionDropOnEdge({
+    getNodes: useCallback(() => nodes, [nodes]),
+    getEdges: useCallback(() => edges, [edges]),
+    onConnect,
+    getConnectionDragState: () => useUIStore.getState().connectionDragState,
+    screenToFlowPosition: pos => reactFlowInstanceRef.current?.screenToFlowPosition(pos) ?? pos,
+  })
+
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (event, connectionState) => {
+      onConnectionDropEnd(event, connectionState)
+      setConnectionDragState(null)
+      setTargetedEdge(null)
+    },
+    [onConnectionDropEnd, setConnectionDragState, setTargetedEdge]
+  )
+
+  const onMouseMove = useCallback(
+    (event: { clientX: number; clientY: number }) => {
+      if (!connectionDragState) return
+      const pos = reactFlowInstanceRef.current?.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      })
+      if (!pos) return
+      const edge = findEdgeAtPosition(
+        pos,
+        connectionDragState.sourceNodeId,
+        () => nodes,
+        () => edges,
+        connectionDragState.compatibleEdgeIds
+      )
+      setTargetedEdge(
+        edge
+          ? { id: edge.id, compatible: connectionDragState.compatibleEdgeIds.has(edge.id) }
+          : null
+      )
+    },
+    [connectionDragState, nodes, edges, setTargetedEdge]
+  )
 
   // Hook for dropping nodes onto edges to insert them
   const { onNodeDragStop: onNodeDragStopBase } = useNodeDropOnEdge({
@@ -590,14 +656,14 @@ export function getNoodles(): Visualization {
       if (hasTimeline) {
         try {
           // Timeline data uses a Theatre.js-compatible JSON format for backwards compatibility.
-          getTimelineStore().fromTheatreJSON(
+          timelineStore.fromTheatreJSON(
             timeline as unknown as import('../timeline/types').TheatreTimelineData
           )
         } catch (error) {
           console.error('Failed to load timeline:', error)
         }
       } else {
-        getTimelineStore().reset()
+        timelineStore.reset()
       }
 
       // Build the operator graph synchronously — operators are ready before any re-render
@@ -616,7 +682,8 @@ export function getNoodles(): Visualization {
       // Render settings are now stored as OutOp inputs (migration 012 handles conversion)
 
       // Load API keys from project file if present
-      getKeysStore().setProjectKeys(apiKeys)
+      const keysStore = getKeysStore()
+      keysStore.setProjectKeys(apiKeys)
 
       // Restore viewport unless we're in an undo/redo restore
       if (viewport && name && !undoRedoRef.current?.isRestoring()) {
@@ -629,7 +696,7 @@ export function getNoodles(): Visualization {
 
       setHasUnsavedChanges(false)
     },
-    [setNodes, setEdges, navigate, routePrefix]
+    [setNodes, setEdges, navigate, routePrefix, timelineStore.fromTheatreJSON, timelineStore.reset]
   )
 
   // Assign to ref for undo/redo system
@@ -746,7 +813,7 @@ export function getNoodles(): Visualization {
   }, [nodes.length])
 
   const displayedNodes = useMemo(() => {
-    const dragHandle = `.${s.header}`
+    const dragHandle = `.${s.dragHandle}`
     const targetContainerId = currentContainerId || '/'
 
     return nodes
@@ -774,7 +841,7 @@ export function getNoodles(): Visualization {
   // File menu callbacks
   const getNoodlesProjectJson = useCallback((): NoodlesProjectJSON => {
     const store = getOpStore()
-    const timeline = getTimelineStore().toTheatreJSON() as unknown as Record<string, unknown>
+    const timeline = timelineStore.toTheatreJSON() as unknown as Record<string, unknown>
     const viewport = reactFlowInstanceRef.current?.getViewport() || { x: 0, y: 0, zoom: 1 }
     const projectKeys = getKeysForProject()
     // Render settings are now stored as OutOp inputs, serialized with the node
@@ -792,7 +859,7 @@ export function getNoodles(): Visualization {
       },
       ...(projectKeys ? { apiKeys: projectKeys } : {}),
     }
-  }, [nodes, edges, layoutMode, showOverlay, showDebugInfo])
+  }, [nodes, edges, layoutMode, showOverlay, showDebugInfo, timelineStore.toTheatreJSON])
 
   const onMenuSave = useCallback(async () => {
     if (!projectName) return
@@ -1085,6 +1152,7 @@ export function getNoodles(): Visualization {
 
       if (isZip) {
         // Handle ZIP import
+        const { default: JSZip } = await import('jszip')
         const zip = await JSZip.loadAsync(await file.arrayBuffer())
 
         // Find the shallowest noodles.json in the ZIP (could be at root or in a subfolder)
@@ -1303,8 +1371,17 @@ export function getNoodles(): Visualization {
   )
 
   const flowGraph = (
-    <ErrorBoundary>
-      <div className={cx('react-flow-wrapper', !showOverlay && 'react-flow-wrapper-hidden')}>
+    <ErrorBoundary
+      onUndo={() => {
+        const before = getLastCommittedBeforeState()
+        if (before != null) applyOperatorInputs(before)
+      }}
+    >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: canvas wrapper needs mouse tracking */}
+      <div
+        className={cx('react-flow-wrapper', !showOverlay && 'react-flow-wrapper-hidden')}
+        onMouseMove={onMouseMove}
+      >
         <PrimeReactProvider>
           <TimelineProvider>
             <ReactFlow
@@ -1335,15 +1412,17 @@ export function getNoodles(): Visualization {
               <BlockLibrary ref={blockLibraryRef} reactFlowRef={reactFlowRef} />
               <CopyControls ref={copyControlsRef} />
               <UndoRedoHandler ref={undoRedoRef} />
-              <ChatPanel
-                project={{ nodes, edges }}
-                onClose={() => {
-                  setShowChatPanel(false)
-                  setChatInitialMessage(undefined)
-                }}
-                isVisible={showChatPanel}
-                initialMessage={chatInitialMessage}
-              />
+              <Suspense fallback={null}>
+                <ChatPanel
+                  project={{ nodes, edges }}
+                  onClose={() => {
+                    setShowChatPanel(false)
+                    setChatInitialMessage(undefined)
+                  }}
+                  isVisible={showChatPanel}
+                  initialMessage={chatInitialMessage}
+                />
+              </Suspense>
               {showDebugInfo && <NodeInfoOverlay />}
               {showDebugInfo && <ViewportInfoPanel />}
             </ReactFlow>
@@ -1455,6 +1534,8 @@ export function getNoodles(): Visualization {
               return new deck[type]({
                 ...layer,
                 ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
+                // Prevent deck.gl layer errors from crashing the GPU process
+                onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
               })
             }) || []
 
@@ -1486,8 +1567,12 @@ export function getNoodles(): Visualization {
             deckProps: {
               ...deckProps,
               layers: instantiatedLayers,
-              // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl widget types dynamically
-              widgets: widgets?.map(({ type, ...widget }) => new deckWidgets[type](widget)),
+              widgets: widgets?.map(({ type, ...widget }) => {
+                if (type === 'LegendWidget')
+                  return new LegendWidget(widget as unknown as LegendWidgetProps)
+                // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl widget types dynamically
+                return new deckWidgets[type](widget)
+              }),
             },
             mapProps,
           })

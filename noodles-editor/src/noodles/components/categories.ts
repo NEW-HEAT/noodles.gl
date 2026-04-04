@@ -89,6 +89,7 @@ export const categories = {
     'LayerProps',
     'Mouse',
     'Project',
+    'Reroute',
     'Unproject',
     'MapStyle',
   ],
@@ -103,7 +104,7 @@ export const categories = {
     'OrthographicView',
     'SplitMapViewState',
   ],
-  widget: ['FpsWidget'],
+  widget: ['CompassWidget', 'FpsWidget', 'FullscreenWidget', 'LegendWidget', 'ScreenshotWidget', 'ZoomWidget'],
 } as const
 
 // TODO: Remove this function when we fully migrate to operator displayNames

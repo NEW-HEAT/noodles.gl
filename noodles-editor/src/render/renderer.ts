@@ -1,11 +1,4 @@
 import { assert, type Deck } from '@deck.gl/core'
-import {
-  EncodedPacket,
-  EncodedVideoPacketSource,
-  Mp4OutputFormat,
-  Output,
-  StreamTarget,
-} from 'mediabunny'
 import { useCallback, useRef, useState } from 'react'
 import { getTimelineStore, useTimelineStore } from '../timeline/timeline-store'
 import { debugRender, debugRenderFrame } from '../utils/debug'
@@ -48,6 +41,7 @@ export const useRenderer = ({
   }, [])
 
   const currentFrame = useRef(0)
+  const { setPosition } = getTimelineStore()
 
   const startCapture = useCallback(
     async ({
@@ -94,6 +88,10 @@ export const useRenderer = ({
         if (!fileHandle) {
           return null
         }
+
+        const { EncodedPacket, EncodedVideoPacketSource, Mp4OutputFormat, Output, StreamTarget } =
+          await import('mediabunny')
+
         const fileWritableStream = await fileHandle.createWritable()
 
         const output = new Output({
@@ -211,9 +209,23 @@ export const useRenderer = ({
         mapRecorder?.reader?.releaseLock()
       }
 
+      // Seek to start frame and wait for render to complete before capturing.
+      // This prevents stale frames from being encoded if the playhead was
+      // at a different position when render started.
+      const warmupSimTime = startFrame / fps
+      setPosition(warmupSimTime)
+      redraw()
+
+      const warmupResult = await canvasFrameReady()
+      if (warmupResult?.error) {
+        debugRender('Error during render warmup:', warmupResult.error)
+        setIsRendering(false)
+        return
+      }
+
       for (; i < endFrame + 1; i++) {
         const simTime = i / fps
-        getTimelineStore().setPosition(simTime)
+        setPosition(simTime)
         redraw()
 
         currentFrame.current = i
@@ -247,7 +259,7 @@ export const useRenderer = ({
       finishEncoding()
       setIsRendering(false)
     },
-    [projectName, sequenceLength, fps, bitrate, bitrateMode, canvasFrameReady, redraw]
+    [projectName, sequenceLength, fps, bitrate, bitrateMode, canvasFrameReady, redraw, setPosition]
   )
 
   // Image sequence export — same frame loop as video capture, writes individual PNGs.
@@ -328,7 +340,7 @@ export const useRenderer = ({
           onFrameStart?.(i - startFrame, totalFrames)
 
           const simTime = i / fps
-          getTimelineStore().setPosition(simTime)
+          setPosition(simTime)
           redraw()
 
           currentFrame.current = i
@@ -372,7 +384,7 @@ export const useRenderer = ({
         setIsRendering(false)
       }
     },
-    [projectName, sequenceLength, fps, redraw, canvasFrameReady, captureFrame]
+    [projectName, sequenceLength, fps, redraw, canvasFrameReady, captureFrame, setPosition]
   )
 
   const [isRendering, setIsRendering] = useState(false)

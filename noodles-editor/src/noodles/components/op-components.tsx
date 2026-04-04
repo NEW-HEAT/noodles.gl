@@ -4,6 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   BaseEdge,
   type EdgeProps,
+  getBezierPath,
   getStraightPath,
   Handle,
   NodeResizer,
@@ -16,7 +17,6 @@ import {
 } from '@xyflow/react'
 import cx from 'classnames'
 import { Layer } from 'deck.gl'
-import { isPlainObject } from 'lodash'
 import { Button } from 'primereact/button'
 import { Column } from 'primereact/column'
 import { DataTable } from 'primereact/datatable'
@@ -25,6 +25,7 @@ import { InputText } from 'primereact/inputtext'
 import {
   type ComponentType,
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -49,6 +50,7 @@ import {
   Operator,
   type OutOp,
   opTypes,
+  type RerouteOp,
   type TableEditorOp,
   type TimeOp,
   type ViewerOp,
@@ -69,6 +71,10 @@ import { generateQualifiedPath, getBaseName, getParentPath } from '../utils/path
 import { categories as baseCategories, nodeTypeToDisplayName } from './categories'
 import { FieldComponent, type inputComponents } from './field-components'
 import previewStyles from './handle-preview.module.css'
+import { useObservable } from '../hooks/use-observable'
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype
 
 // Extend categories with mathOps for UI purposes (add node menu, header classes, typeCategory)
 // Base categories.ts doesn't include mathOps to keep it clean for context generation
@@ -85,26 +91,12 @@ const SLOW_EXECUTION_THRESHOLD_MS = 100
 
 // Hook to subscribe to operator execution state
 function useExecutionState(op: Operator<IOperator>): ExecutionState {
-  const [executionState, setExecutionState] = useState<ExecutionState>({ status: 'idle' })
-
-  useEffect(() => {
-    const subscription = op.executionState.subscribe(setExecutionState)
-    return () => subscription.unsubscribe()
-  }, [op])
-
-  return executionState
+  return useObservable(op.executionState, { status: 'idle' })
 }
 
 // Hook to subscribe to operator connection errors
 function useConnectionErrors(op: Operator<IOperator>): Map<string, string> {
-  const [connectionErrors, setConnectionErrors] = useState<Map<string, string>>(new Map())
-
-  useEffect(() => {
-    const subscription = op.connectionErrors.subscribe(setConnectionErrors)
-    return () => subscription.unsubscribe()
-  }, [op])
-
-  return connectionErrors
+  return useObservable(op.connectionErrors, new Map())
 }
 
 // Hook to check if a node should be dimmed during connection drag
@@ -122,8 +114,8 @@ export function useHandleDimmed(nodeId: string, handleId: string): boolean {
   const drag = useUIStore(state => state.connectionDragState)
 
   if (!drag) return false
-  // Don't dim handles on the source node
-  if (drag.sourceNodeId === nodeId) return false
+  // Dim all handles on the source node except the one being dragged (no self-connections)
+  if (drag.sourceNodeId === nodeId) return drag.sourceHandleId !== handleId
   // If the node is not compatible, handles are already dimmed via node dimming
   if (!drag.compatibleNodeIds.has(nodeId)) return false
 
@@ -192,6 +184,7 @@ export const nodeComponents = {
   DirectionsOp: memo(DirectionsOpComponent, nodePropsAreEqual),
   MouseOp: memo(MouseOpComponent, nodePropsAreEqual),
   OutOp: memo(OutOpComponent, nodePropsAreEqual),
+  RerouteOp: memo(RerouteOpComponent, nodePropsAreEqual),
   TableEditorOp: memo(TableEditorOpComponent, nodePropsAreEqual),
   TimeOp: memo(TimeOpComponent, nodePropsAreEqual),
   ViewerOp: memo(ViewerOpComponent, nodePropsAreEqual),
@@ -199,8 +192,38 @@ export const nodeComponents = {
 } as const as ReactFlowNodeTypes
 
 export const edgeComponents = {
+  default: DefaultEdgeComponent,
   ReferenceEdge: ReferenceEdgeComponent,
 } as const as ReactFlowEdgeTypes
+
+function DefaultEdgeComponent({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+}: EdgeProps) {
+  const targetedEdge = useUIStore(s => s.targetedEdge)
+  const [edgePath] = getBezierPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  })
+  const edgeClassName =
+    targetedEdge?.id === id
+      ? targetedEdge.compatible
+        ? s.targetedEdge
+        : s.targetedEdgeIncompatible
+      : undefined
+  return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} className={edgeClassName} />
+}
 
 function ReferenceEdgeComponent({
   sourceX,
@@ -322,12 +345,11 @@ const handleClasses = {
   effect: s.handleEffect,
   expression: s.handleCode,
   extension: s.handleExtension,
-  file: s.handleString,
+  'file-url': s.handleString,
   function: s.handleCode,
   geojson: s.handleGeojson,
   'geopoint-2d': s.handleVector,
   'geopoint-3d': s.handleVector,
-  'json-url': s.handleString,
   layer: s.handleLayer,
   list: s.handleList,
   number: s.handleNumber,
@@ -575,6 +597,35 @@ function NodeComponent({
   )
 }
 
+// Renders a popover anchored directly to the trigger element via position:absolute
+// so it stays inside the ReactFlow canvas coordinate space (avoids fixed-positioning
+// issues caused by CSS transforms on the ReactFlow viewport).
+function ErrorPopover({
+  error,
+  trigger,
+  open,
+  onDismiss,
+}: {
+  error: string
+  trigger: ReactNode
+  open: boolean
+  onDismiss: () => void
+}) {
+  return (
+    <div className={s.errorPopoverAnchor}>
+      {trigger}
+      {open && (
+        <div className={s.errorPopover}>
+          <span className={s.errorPopoverMessage}>{error}</span>
+          <button className={s.errorPopoverClose} onClick={onDismiss} type="button">
+            <i className="pi pi-times" />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const ExecutionIndicator = ({ status, error, executionTime }: ExecutionState) => {
   switch (status) {
     case 'executing':
@@ -588,10 +639,7 @@ const ExecutionIndicator = ({ status, error, executionTime }: ExecutionState) =>
       )
     case 'error':
       return (
-        <div
-          className={cx(s.executionIndicator, s.executionIndicatorError)}
-          title={`Error: ${error}`}
-        >
+        <div className={cx(s.executionIndicator, s.executionIndicatorError)}>
           <i className="pi pi-exclamation-triangle" />
         </div>
       )
@@ -623,6 +671,42 @@ function NodeHeader({
   const [locked, setLocked] = useState(op.locked.value)
   const executionState = useExecutionState(op)
   const hasConnectionErrors = connectionErrors && connectionErrors.size > 0
+
+  // Popover visibility state for execution errors
+  const [execAutoShow, setExecAutoShow] = useState(false)
+  const [execDismissed, setExecDismissed] = useState(false)
+  // Popover visibility state for connection errors
+  const [connAutoShow, setConnAutoShow] = useState(false)
+  const [connDismissed, setConnDismissed] = useState(false)
+  const [headerHovered, setHeaderHovered] = useState(false)
+
+  const execErrorKey = executionState.status === 'error' ? executionState.error ?? '' : null
+  const connErrorKey = hasConnectionErrors ? Array.from(connectionErrors!.values()).join('\n') : null
+
+  useEffect(() => {
+    if (execErrorKey !== null) {
+      setExecAutoShow(true)
+      setExecDismissed(false)
+      const t = setTimeout(() => setExecAutoShow(false), 10_000)
+      return () => clearTimeout(t)
+    }
+    setExecAutoShow(false)
+    setExecDismissed(false)
+  }, [execErrorKey])
+
+  useEffect(() => {
+    if (connErrorKey !== null) {
+      setConnAutoShow(true)
+      setConnDismissed(false)
+      const t = setTimeout(() => setConnAutoShow(false), 10_000)
+      return () => clearTimeout(t)
+    }
+    setConnAutoShow(false)
+    setConnDismissed(false)
+  }, [connErrorKey])
+
+  const execPopoverOpen = execErrorKey !== null && ((execAutoShow && !execDismissed) || headerHovered)
+  const connPopoverOpen = connErrorKey !== null && ((connAutoShow && !connDismissed) || headerHovered)
 
   const toggleLock = () => {
     op.locked.next(!op.locked.value)
@@ -763,8 +847,23 @@ function NodeHeader({
   const downloadable = Boolean(op.asDownload)
   const createDownload = useCallback(() => {
     if (!op.asDownload) return
-    // TODO: make this more generic, or have the op handle it
     const data = op.asDownload()
+
+    if (data instanceof Element) {
+      const svgEl = data instanceof SVGElement ? data : data.querySelector('svg')
+      if (svgEl) {
+        const svgStr = new XMLSerializer().serializeToString(svgEl)
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${baseName}.svg`
+        a.click()
+        URL.revokeObjectURL(url)
+        return
+      }
+    }
+
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -776,24 +875,36 @@ function NodeHeader({
 
   const { displayName } = op.constructor as typeof Operator
 
-  // Format connection error tooltip
-  const connectionErrorTooltip = hasConnectionErrors
-    ? Array.from(connectionErrors!.values()).join('\n')
-    : ''
-
   return (
-    <div className={cx(s.header, headerClass(type))}>
+    <div
+      className={cx(s.header, s.dragHandle, headerClass(type))}
+      onMouseEnter={() => setHeaderHovered(true)}
+      onMouseLeave={() => setHeaderHovered(false)}
+    >
       <div className={s.headerTitle} title={`${id} (${displayName})`}>
         {editableId} ({displayName})
       </div>
-      <ExecutionIndicator {...executionState} />
-      {hasConnectionErrors && (
-        <div
-          className={cx(s.executionIndicator, s.executionIndicatorError)}
-          title={connectionErrorTooltip}
-        >
-          <i className="pi pi-link" />
-        </div>
+      {execErrorKey !== null ? (
+        <ErrorPopover
+          error={`Error: ${execErrorKey}`}
+          open={execPopoverOpen}
+          onDismiss={() => setExecDismissed(true)}
+          trigger={<ExecutionIndicator {...executionState} />}
+        />
+      ) : (
+        <ExecutionIndicator {...executionState} />
+      )}
+      {hasConnectionErrors && connErrorKey && (
+        <ErrorPopover
+          error={connErrorKey}
+          open={connPopoverOpen}
+          onDismiss={() => setConnDismissed(true)}
+          trigger={
+            <div className={cx(s.executionIndicator, s.executionIndicatorError)}>
+              <i className="pi pi-link" />
+            </div>
+          }
+        />
       )}
       <div className={s.headerActions}>
         {downloadable && (
@@ -1422,6 +1533,33 @@ function TimeOpComponent({
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+function RerouteOpComponent({
+  id,
+}: ReactFlowNodeProps<NodeDataJSON<RerouteOp>> & { type: 'RerouteOp' }) {
+  const isDimmed = useNodeDimmed(id)
+  const isInputDimmed = useHandleDimmed(id, 'par.value')
+  const isOutputDimmed = useHandleDimmed(id, 'out.value')
+
+  return (
+    <div className={cx(s.rerouteNode, s.dragHandle, { [s.wrapperDimmed]: isDimmed })}>
+      <Handle
+        id="par.value"
+        type="target"
+        position={Position.Left}
+        className={cx(s.rerouteHandle, { [s.handleDimmed]: isInputDimmed })}
+        style={{ top: '50%', transform: 'translateY(-50%)' }}
+      />
+      <Handle
+        id="out.value"
+        type="source"
+        position={Position.Right}
+        className={cx(s.rerouteHandle, { [s.handleDimmed]: isOutputDimmed })}
+        style={{ top: '50%', transform: 'translateY(-50%)' }}
+      />
     </div>
   )
 }

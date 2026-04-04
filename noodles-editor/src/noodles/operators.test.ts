@@ -25,6 +25,7 @@ import {
   Operator,
   ProjectOp,
   RectangleOp,
+  RerouteOp,
   ScatterplotLayerOp,
   SelectOp,
   SwitchOp,
@@ -1976,7 +1977,7 @@ describe('TimeSeriesOp', () => {
 })
 
 describe('KmlToGeoJsonOp', () => {
-  it('should convert KML to GeoJSON', () => {
+  it('should convert KML to GeoJSON', async () => {
     const operator = new KmlToGeoJsonOp('/kml-to-geojson-0')
 
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1991,7 +1992,7 @@ describe('KmlToGeoJsonOp', () => {
   </Document>
 </kml>`
 
-    const result = operator.execute({ kml })
+    const result = await operator.execute({ kml })
 
     expect(result.geojson.type).toBe('FeatureCollection')
     expect(result.geojson.features).toHaveLength(1)
@@ -2396,35 +2397,35 @@ describe('Tile3DLayerOp', () => {
   const GOOGLE_URL = 'https://tile.googleapis.com/v1/3dtiles/root.json'
   const CESIUM_URL = 'https://assets.ion.cesium.com/242005/tileset.json'
 
-  it('defaults to the Google tileset URL when provider is Google', () => {
+  it('defaults to the Google tileset URL when provider is Google', async () => {
     const op = new Tile3DLayerOp('/tile3d-0')
-    const { layer } = op.execute({})
+    const { layer } = await op.execute({})
     expect(layer.type).toEqual('Tile3DLayer')
     expect(layer.data).toEqual(GOOGLE_URL)
   })
 
-  it('uses the Cesium tileset URL when provider is Cesium', () => {
+  it('uses the Cesium tileset URL when provider is Cesium', async () => {
     const op = new Tile3DLayerOp('/tile3d-0')
-    const { layer } = op.execute({ provider: 'Cesium' })
+    const { layer } = await op.execute({ provider: 'Cesium' })
     expect(layer.data).toEqual(CESIUM_URL)
   })
 
-  it('uses a custom tilesetUrl when provided, regardless of provider', () => {
+  it('uses a custom tilesetUrl when provided, regardless of provider', async () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const custom = 'https://example.com/custom/tileset.json'
-    const { layer: googleLayer } = op.execute({ tilesetUrl: custom, provider: 'Google' })
+    const { layer: googleLayer } = await op.execute({ tilesetUrl: custom, provider: 'Google' })
     expect(googleLayer.data).toEqual(custom)
 
-    const { layer: cesiumLayer } = op.execute({ tilesetUrl: custom, provider: 'Cesium' })
+    const { layer: cesiumLayer } = await op.execute({ tilesetUrl: custom, provider: 'Cesium' })
     expect(cesiumLayer.data).toEqual(custom)
 
-    const { layer: genericLayer } = op.execute({ tilesetUrl: custom, provider: 'Generic' })
+    const { layer: genericLayer } = await op.execute({ tilesetUrl: custom, provider: 'Generic' })
     expect(genericLayer.data).toEqual(custom)
   })
 
-  it('falls back to the provider default when tilesetUrl is empty', () => {
+  it('falls back to the provider default when tilesetUrl is empty', async () => {
     const op = new Tile3DLayerOp('/tile3d-0')
-    const { layer } = op.execute({ tilesetUrl: '', provider: 'Cesium' })
+    const { layer } = await op.execute({ tilesetUrl: '', provider: 'Cesium' })
     expect(layer.data).toEqual(CESIUM_URL)
   })
 
@@ -2437,5 +2438,26 @@ describe('Tile3DLayerOp', () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const values = op.inputs.provider.choices.map(c => c.value)
     expect(values).toContain('Generic')
+  })
+})
+
+describe('RerouteOp', () => {
+  it('passes a value through unchanged', () => {
+    const op = new RerouteOp('/reroute-0')
+    const data = [1, 2, 3]
+    const result = op.execute({ value: data })
+    expect(result.value).toBe(data)
+  })
+
+  it('passes undefined through when input is not connected', () => {
+    const op = new RerouteOp('/reroute-0')
+    const result = op.execute({ value: undefined })
+    expect(result.value).toBeUndefined()
+  })
+
+  it('has a single value input and a single value output', () => {
+    const op = new RerouteOp('/reroute-0')
+    expect(Object.keys(op.inputs)).toEqual(['value'])
+    expect(Object.keys(op.outputs)).toEqual(['value'])
   })
 })

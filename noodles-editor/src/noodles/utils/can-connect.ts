@@ -30,6 +30,7 @@ type ZodDef = {
   type: string
   innerType?: z.ZodType
   schema?: z.ZodType
+  in?: z.ZodType // ZodPipe input schema (Zod v4 uses def.in, not def.innerType)
   element?: z.ZodType
   shape?: Record<string, z.ZodType>
   options?: z.ZodType[]
@@ -52,7 +53,7 @@ function unwrapSchema(schema: z.ZodType): z.ZodType {
   // biome-ignore lint/suspicious/noExplicitAny: Zod internal API access
   let def = (current as any)._zod.def as ZodDef
   while (WRAPPER_TYPES.has(def.type)) {
-    const inner = def.innerType ?? def.schema
+    const inner = def.innerType ?? def.schema ?? def.in
     if (!inner) break
     current = inner
     // biome-ignore lint/suspicious/noExplicitAny: Zod internal API access
@@ -178,4 +179,16 @@ export function validateConnection(from: Field, to: Field): ConnectionValidation
 // Legacy function for backward compatibility - returns boolean only
 export function canConnect(from: Field, to: Field): boolean {
   return validateConnection(from, to).valid
+}
+
+// Module-level cache keyed by field class pair — valid since schemasAreCompatible is structural
+const canConnectCache = new Map<string, boolean>()
+
+export function canConnectCached(from: Field, to: Field): boolean {
+  const key = `${from.constructor.name}:${to.constructor.name}`
+  const cached = canConnectCache.get(key)
+  if (cached !== undefined) return cached
+  const result = canConnect(from, to)
+  canConnectCache.set(key, result)
+  return result
 }
