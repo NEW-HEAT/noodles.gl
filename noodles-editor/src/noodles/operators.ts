@@ -7066,9 +7066,265 @@ export class TimeSeriesOp extends Operator<TimeSeriesOp> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Data Filter — filter array data by category, time range, bounds, user
+// ---------------------------------------------------------------------------
+
+export class DataFilterOp extends Operator<DataFilterOp> {
+  static displayName = 'Data Filter'
+  static description = 'Filter data by category, time range, geographic bounds, or user'
+
+  createInputs() {
+    return {
+      data: new DataField(),
+      categoryFilter: new StringField('', { placeholder: 'Run, Ride, Hike, etc. (empty = all)' }),
+      timeFilter: new StringLiteralField('all', { values: ['all', 'today', 'week', 'month', 'custom'] }),
+      startTime: new NumberField(0, { min: 0 }),
+      endTime: new NumberField(0, { min: 0 }),
+      userId: new StringField('', { placeholder: 'Filter by user ID' }),
+      useBounds: new BooleanField(false),
+      minLng: new NumberField(-180, { min: -180, max: 180 }),
+      minLat: new NumberField(-90, { min: -90, max: 90 }),
+      maxLng: new NumberField(180, { min: -180, max: 180 }),
+      maxLat: new NumberField(90, { min: -90, max: 90 }),
+      limit: new NumberField(0, { min: 0, step: 1 }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      data: new DataField(),
+      count: new NumberField(0),
+      uniqueUsers: new NumberField(0),
+    }
+  }
+
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const { data, categoryFilter, timeFilter, startTime, endTime, userId, useBounds, minLng, minLat, maxLng, maxLat, limit } = props
+    const items: Array<Record<string, unknown>> = Array.isArray(data) ? data : []
+
+    const now = Date.now()
+    let filterStart = 0
+    let filterEnd = now
+
+    switch (timeFilter) {
+      case 'today': filterStart = now - 86400000; break
+      case 'week': filterStart = now - 604800000; break
+      case 'month': filterStart = now - 2592000000; break
+      case 'custom': filterStart = startTime || 0; filterEnd = endTime || now; break
+    }
+
+    let filtered = items.filter((item) => {
+      if (categoryFilter && (categoryFilter as string).trim()) {
+        const types = (categoryFilter as string).split(',').map((t: string) => t.trim().toLowerCase())
+        const itemType = ((item.activityType || item.sourceType || '') as string).toLowerCase()
+        if (!types.includes(itemType)) return false
+      }
+      if (timeFilter !== 'all') {
+        const itemStart = (item.startTime || (item.timestamps as number[])?.[0] || 0) as number
+        const itemEnd = (item.endTime || (item.timestamps as number[])?.[((item.timestamps as number[])?.length ?? 1) - 1] || 0) as number
+        if (itemEnd < filterStart || itemStart > filterEnd) return false
+      }
+      if (userId && (userId as string).trim()) {
+        if (item.userId !== (userId as string).trim()) return false
+      }
+      if (useBounds && Array.isArray(item.path) && item.path.length > 0) {
+        const inBounds = (item.path as [number, number][]).some(([lng, lat]) =>
+          lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat
+        )
+        if (!inBounds) return false
+      }
+      return true
+    })
+
+    if (limit > 0) filtered = filtered.slice(0, limit)
+
+    const uniqueUserIds = new Set(filtered.map((a) => a.userId).filter(Boolean))
+    return { data: filtered, count: filtered.length, uniqueUsers: uniqueUserIds.size }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Color Palette — theme-aware coloring for categorized data
+// ---------------------------------------------------------------------------
+
+export class ColorPaletteOp extends Operator<ColorPaletteOp> {
+  static displayName = 'Color Palette'
+  static description = 'Apply theme-based colors to categorized data'
+
+  createInputs() {
+    return {
+      routes: new DataField(),
+      theme: new StringField('orange'),
+      colorMode: new StringField('category'),
+      customColor: new StringField('#ff6432'),
+      opacity: new NumberField(255),
+      colorOverrides: new StringField('{}'),
+    }
+  }
+
+  createOutputs() {
+    return {
+      routes: new DataField(),
+      palette: new DataField(),
+      themeName: new StringField(''),
+      themePrimary: new StringField(''),
+      coloredCount: new NumberField(0),
+    }
+  }
+
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const { routes: inputRoutes, theme, colorMode, customColor, opacity, colorOverrides: overridesJson } = props
+    const routes = (inputRoutes as Array<Record<string, unknown>>) || []
+
+    let colorOverrides: Record<string, string> = {}
+    try { colorOverrides = JSON.parse((overridesJson as string) || '{}') } catch { /* ignore */ }
+
+    const colored = utils.colorizeData(routes as Array<utils.ColorableData>, {
+      theme: theme as string,
+      colorMode: colorMode as utils.ColorMode,
+      customColor: customColor as string,
+      opacity: opacity as number,
+      colorOverrides,
+    })
+
+    const themes = utils.ACTIVITY_THEMES
+    const themeData = themes[theme as string] || themes[Object.keys(themes)[0]!]!
+    const palette = Object.entries(themeData.palette).map(([group, hex]) => ({
+      group,
+      color: hex,
+      rgba: utils.hexToRgbaArray(hex, opacity as number),
+    }))
+
+    return {
+      routes: colored as unknown as unknown[],
+      palette: palette as unknown as unknown[],
+      themeName: themeData.name,
+      themePrimary: themeData.primary,
+      coloredCount: colored.length,
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Data Request — build query configuration for external data fetching
+// ---------------------------------------------------------------------------
+
+export class DataRequestOp extends Operator<DataRequestOp> {
+  static displayName = 'Data Request'
+  static description = 'Configure data fetching parameters for queries'
+
+  createInputs() {
+    return {
+      timePreset: new StringLiteralField('today', {
+        values: ['all', 'today', 'yesterday', 'last_7_days', 'this_week', 'last_week',
+          'this_month', 'last_30_days', 'last_90_days', 'this_year', 'custom'],
+      }),
+      customStartTime: new NumberField(0, { min: 0 }),
+      customEndTime: new NumberField(0, { min: 0 }),
+      activityTypes: new StringField('', { placeholder: 'Run, Ride, Hike (empty = all)' }),
+      userId: new StringField('', { placeholder: 'User ID' }),
+      username: new StringField('', { placeholder: '@username or name' }),
+      useBounds: new BooleanField(false),
+      minLng: new NumberField(-180, { min: -180, max: 180 }),
+      minLat: new NumberField(-90, { min: -90, max: 90 }),
+      maxLng: new NumberField(180, { min: -180, max: 180 }),
+      maxLat: new NumberField(90, { min: -90, max: 90 }),
+      limit: new NumberField(100, { min: 1, max: 1000, step: 10 }),
+      offset: new NumberField(0, { min: 0, step: 10 }),
+      trigger: new NumberField(0, { min: 0, step: 1 }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      config: new DataField(),
+      requestId: new StringField(''),
+      requestedAt: new NumberField(0),
+    }
+  }
+
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const { timePreset, customStartTime, customEndTime, activityTypes, userId, username,
+      useBounds, minLng, minLat, maxLng, maxLat, limit, offset, trigger } = props
+
+    const parsedTypes = (activityTypes as string).split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
+    const requestId = `req-${trigger}-${Date.now()}`
+    const requestedAt = Date.now()
+
+    return {
+      config: { timePreset, customStartTime, customEndTime, activityTypes: parsedTypes,
+        userId: (userId as string).trim(), username: (username as string).trim(),
+        useBounds, minLng, minLat, maxLng, maxLat, limit, offset, requestId, requestedAt },
+      requestId,
+      requestedAt,
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stats Display — output stats props for DOM rendering
+// ---------------------------------------------------------------------------
+
+export class StatsDisplayOp extends Operator<StatsDisplayOp> {
+  static displayName = 'Stats Display'
+  static description = 'Output stats props for DOM rendering'
+
+  createInputs() {
+    return {
+      activityCount: new NumberField(0, { min: 0 }),
+      uniqueUsers: new NumberField(0, { min: 0 }),
+      visible: new BooleanField(true),
+      position: new StringLiteralField('bottom-left', {
+        values: ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+      }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      props: new DataField(),
+    }
+  }
+
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const { activityCount, uniqueUsers, visible, position } = props
+    if (!visible) return { props: null }
+    return { props: { activityCount, uniqueUsers, position } }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DOM Sink — terminal operator that pulls upstream nodes
+// ---------------------------------------------------------------------------
+
+export class DomSinkOp extends Operator<DomSinkOp> {
+  static displayName = 'DOM Sink'
+  static description = 'Terminal for DOM-rendered outputs (causes upstream execution)'
+
+  createInputs() {
+    return {
+      data: new DataField(),
+    }
+  }
+
+  createOutputs() {
+    return {}
+  }
+
+  execute(): ExtractProps<typeof this.outputs> {
+    return {}
+  }
+}
+
 export const opTypes = {
   AccessorOp,
   A5LayerOp,
+  ColorPaletteOp,
+  DataFilterOp,
+  DataRequestOp,
+  DomSinkOp,
+  StatsDisplayOp,
   ArcOp,
   ArcLayerOp,
   BezierCurveOp,
@@ -7191,6 +7447,11 @@ export const opTypes = {
   VibranceExtensionOp,
   ViewerOp,
   ZoomWidgetOp,
+  // Backward-compat aliases for graph templates using legacy names
+  ActivityFilterOp: DataFilterOp,
+  ColorOps: ColorPaletteOp,
+  StatsOp: StatsDisplayOp,
+  DomOutOp: DomSinkOp,
 } as const // as Record<OpType, typeof Operator>
 
 // Execution state for visual debugging
