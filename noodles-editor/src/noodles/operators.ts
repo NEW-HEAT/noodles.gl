@@ -3991,10 +3991,12 @@ function parseLayerProps<P extends LayerProps>({
   const result = { ...props }
 
   if (validExtensions.length > 0) {
-    // Keep extensions as POJOs for now - they'll be instantiated later in noodles.tsx
-    result.extensions = validExtensions.map(e => e.extension)
+    // Keep full { extension, props } structure so instantiation can pass
+    // constructor args (e.g. terrainDrawMode) to the Extension class.
+    result.extensions = validExtensions
 
-    // Merge extension props into the layer props
+    // Also merge extension props into the layer props — deck.gl reads
+    // extension-defined props (like terrainDrawMode) from the layer.
     for (const ext of validExtensions) {
       Object.assign(result, ext.props)
     }
@@ -6464,6 +6466,7 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       bounds: new UnknownField(null, { optional: true }),
       color: new ColorField('#ffffff', { transform: hexToColor }),
       wireframe: new BooleanField(false, { showByDefault: false }),
+      operation: new StringField('terrain+draw', { showByDefault: false }),
       parameters: new CompoundPropsField(
         {
           depthTest: new BooleanField(true),
