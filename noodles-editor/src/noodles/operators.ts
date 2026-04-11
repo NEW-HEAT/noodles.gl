@@ -1812,16 +1812,11 @@ const duckDbInstance = (async () => {
   const db = new duckdb.AsyncDuckDB(logger, worker)
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
 
-  const conn = await db.connect()
-  await conn.query(`
-    SET autoinstall_known_extensions = 1;
-    INSTALL spatial;
-    LOAD spatial;
-    INSTALL httpfs;
-    -- Not sure why but this isn't loading. For some reason it still works in the code though
-    -- LOAD httpfs;
-  `)
-  await conn.close()
+  // Extension pre-install removed: @uwdata/mosaic-core pins duckdb-wasm@1.30.0
+  // while @sqlrooms/duckdb uses 1.32.0. The spatial extension fetched from
+  // extensions.duckdb.org is compiled against a different engine version,
+  // causing a SharedArrayBuffer memory mismatch crash with the COI worker.
+  // Fix: deduplicate duckdb-wasm via pnpm.overrides, then restore this block.
 
   return db
 })()
