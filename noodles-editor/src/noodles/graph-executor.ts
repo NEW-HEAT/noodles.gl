@@ -540,10 +540,13 @@ export class GraphExecutor {
 
     let changed = false
 
+    // Build a Set for O(1) existence checks instead of O(n) find per node
+    const opIds = new Set<string>(ops.map(op => op.id))
+
     // Remove nodes that no longer exist in store (but preserve manually added nodes)
     for (const [id] of this.nodes) {
       // Don't remove nodes that were manually added via addNode()
-      if (!this.manuallyAddedNodes.has(id) && !ops.find(op => op.id === id)) {
+      if (!this.manuallyAddedNodes.has(id) && !opIds.has(id)) {
         this.nodes.delete(id)
         changed = true
       }
