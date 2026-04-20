@@ -6674,7 +6674,24 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       texture: new StringField('', { optional: true }),
       visible: new BooleanField(true),
       opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
+      minZoom: new NumberField(0, { min: 0, max: 24, showByDefault: false }),
+      maxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
       meshMaxError: new NumberField(4, { min: 0, softMax: 100, showByDefault: false }),
+      // 'grid' tesselator emits a deterministic lng/lat vertex grid — much
+      // faster to upload and tesselate than the default 'auto' (martini),
+      // especially at global zooms. Requires the vendored deck.gl fork.
+      tesselator: new StringLiteralField('auto', {
+        values: ['auto', 'grid'],
+        showByDefault: false,
+      }),
+      // Vertices per side for the grid tesselator. Default 65 ≈ 8k tris/tile.
+      gridSize: new NumberField(65, { min: 2, softMax: 257, showByDefault: false }),
+      // Inherited from TileLayer. 'best-available' keeps parent tiles visible
+      // while children refine — avoids visible gaps on wide globe views.
+      refinementStrategy: new StringLiteralField('best-available', {
+        values: ['best-available', 'no-overlap', 'never'],
+        showByDefault: false,
+      }),
       elevationDecoder: new CompoundPropsField({
         rScaler: new NumberField(1),
         gScaler: new NumberField(0),
