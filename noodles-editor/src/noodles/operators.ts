@@ -6676,6 +6676,10 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
       minZoom: new NumberField(0, { min: 0, max: 24, showByDefault: false }),
       maxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
+      // Vendored deck.gl TerrainLayer props. textureMaxZoom drives imagery
+      // refinement; meshMaxZoom caps the elevation source independently.
+      textureMaxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
+      meshMaxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
       meshMaxError: new NumberField(4, { min: 0, softMax: 100, showByDefault: false }),
       // 'grid' tesselator emits a deterministic lng/lat vertex grid — much
       // faster to upload and tesselate than the default 'auto' (martini),
