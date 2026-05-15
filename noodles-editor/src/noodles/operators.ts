@@ -6751,6 +6751,13 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
       minZoom: new NumberField(0, { min: 0, max: 24, showByDefault: false }),
       maxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
+      meshMaxZoom: new NumberField(15, { min: 0, max: 24, optional: true, showByDefault: false }),
+      textureMaxZoom: new NumberField(16, {
+        min: 0,
+        max: 24,
+        optional: true,
+        showByDefault: false,
+      }),
       maxRequests: new NumberField(24, { min: 0, softMax: 512, showByDefault: false }),
       meshMaxError: new NumberField(4, { min: 0, softMax: 100, showByDefault: false }),
       extent: new UnknownField([-Infinity, -Infinity, Infinity, Infinity], {
