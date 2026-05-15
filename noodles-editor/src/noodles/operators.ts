@@ -3597,6 +3597,18 @@ function createGeoViewFields() {
       step: 0.1,
       showByDefault: false,
     }),
+    nearZ: new NumberField(undefined, {
+      min: 0,
+      softMax: 10,
+      optional: true,
+      showByDefault: false,
+    }),
+    farZ: new NumberField(undefined, {
+      min: 0,
+      softMax: 10_000_000,
+      optional: true,
+      showByDefault: false,
+    }),
     nearZMultiplier: new NumberField(0.1, {
       min: 0,
       softMax: 1_000,
@@ -3694,10 +3706,12 @@ export class GlobeViewOp extends Operator<GlobeViewOp> {
     return {
       ...createBaseViewFields(),
       ...createGeoViewFields(),
+      controller: new BooleanField(false),
       viewState: new CompoundPropsField({
         ...createGeoViewStateFields(),
         zoom: new NumberField(12, { min: 0, max: 24, step: 0.1 }),
       }),
+      parameters: new UnknownField({}, { showByDefault: false }),
     }
   }
 
@@ -5234,11 +5248,14 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
       }),
       wireframe: new BooleanField(false),
       flatLighting: new BooleanField(true, { showByDefault: false }),
-      throttleRequests: new BooleanField(false, { showByDefault: false }),
+      throttleRequests: new BooleanField(true, { showByDefault: false }),
+      maxRequests: new NumberField(64, { min: 0, softMax: 512, showByDefault: false }),
+      loadSiblings: new BooleanField(false, { showByDefault: false }),
       pointSize: new NumberField(1, { min: 0, softMax: 100 }), // Only applies when tile format is 'pnts'
       maxLodMetricValue: new NumberField(2, { min: 0, softMax: 10, showByDefault: false }),
       maxScreenSpaceError: new NumberField(50, { min: 0, softMax: 1_000, showByDefault: false }),
-      maxMemoryUsage: new NumberField(2024, { min: 0, softMax: 10_000, showByDefault: false }),
+      maxMemoryUsage: new NumberField(512, { min: 0, softMax: 10_000, showByDefault: false }),
+      memoryAdjustedScreenSpaceError: new BooleanField(false, { showByDefault: false }),
       parameters: new CompoundPropsField(
         {
           depthTest: new BooleanField(true),
@@ -5258,8 +5275,11 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
     provider,
     tilesetUrl,
     throttleRequests,
+    maxRequests,
+    loadSiblings,
     maxMemoryUsage,
     maxScreenSpaceError,
+    memoryAdjustedScreenSpaceError,
     ...props
   }: ExtractProps<typeof this.inputs>) {
     const GOOGLE_TILESET_URL = 'https://tile.googleapis.com/v1/3dtiles/root.json'
@@ -5268,6 +5288,29 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
     const { getKey } = getKeysStore()
     const GOOGLE_MAPS_API_KEY = getKey('googleMaps')
     const CESIUM_ACCESS_TOKEN = getKey('cesium')
+
+    if (provider === 'Google' && !GOOGLE_MAPS_API_KEY && props.visible === false) {
+      return {
+        layer: {
+          ...parseLayerProps<Tile3DLayerProps>(props),
+          type: 'Tile3DLayer' as const,
+          data: '',
+          id: this.id,
+          updateTriggers: gatherTriggers(this.inputs, props),
+        },
+      }
+    }
+    if (provider === 'Cesium' && !CESIUM_ACCESS_TOKEN && props.visible === false) {
+      return {
+        layer: {
+          ...parseLayerProps<Tile3DLayerProps>(props),
+          type: 'Tile3DLayer' as const,
+          data: '',
+          id: this.id,
+          updateTriggers: gatherTriggers(this.inputs, props),
+        },
+      }
+    }
 
     if (provider === 'Google' && !GOOGLE_MAPS_API_KEY) {
       throw new Error('Tile3DLayer: Google Maps API key is not set (add it in Settings > API Keys)')
@@ -5288,23 +5331,49 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
 
     const loadOptions =
       provider === 'Google'
-        ? { fetch: { headers: { 'X-GOOG-API-KEY': GOOGLE_MAPS_API_KEY } } }
+        ? {
+            fetch: { headers: { 'X-GOOG-API-KEY': GOOGLE_MAPS_API_KEY } },
+            tileset: {
+              throttleRequests,
+              maxRequests,
+              loadSiblings,
+              maximumScreenSpaceError: maxScreenSpaceError,
+              maximumMemoryUsage: maxMemoryUsage,
+              memoryAdjustedScreenSpaceError,
+            },
+          }
         : provider === 'Cesium'
           ? {
               tileset: {
                 throttleRequests,
+                maxRequests,
+                loadSiblings,
+                maximumScreenSpaceError: maxScreenSpaceError,
+                maximumMemoryUsage: maxMemoryUsage,
+                memoryAdjustedScreenSpaceError,
               },
               'cesium-ion': { accessToken: CESIUM_ACCESS_TOKEN },
             }
-          : null
+          : {
+              tileset: {
+                throttleRequests,
+                maxRequests,
+                loadSiblings,
+                maximumScreenSpaceError: maxScreenSpaceError,
+                maximumMemoryUsage: maxMemoryUsage,
+                memoryAdjustedScreenSpaceError,
+              },
+            }
 
     const onTilesetLoad = (tileset3d: Tileset3D) => {
       tileset3d.maximumMemoryUsage = maxMemoryUsage
       tileset3d.setProps({
         throttleRequests,
-        // cullRequestsWhileMoving: false,
+        maxRequests,
+        loadSiblings,
         maximumScreenSpaceError: maxScreenSpaceError,
         maximumMemoryUsage: maxMemoryUsage,
+        memoryAdjustedScreenSpaceError,
       })
 
       tileset3d.options.onTraversalComplete = selectedTiles => {
@@ -5451,9 +5520,15 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
       minZoom: new NumberField(0, { min: 0, max: 24 }),
       maxZoom: new NumberField(24, { min: 0, max: 24 }),
       tileSize: new NumberField(256, { min: 1, softMax: 1024 }),
+      maxRequests: new NumberField(6, { min: 0, softMax: 512, showByDefault: false }),
+      refinementStrategy: new StringLiteralField('best-available', {
+        values: ['best-available', 'no-overlap', 'never'],
+        showByDefault: false,
+      }),
       parameters: new CompoundPropsField(
         {
           depthTest: new BooleanField(true),
+          depthWriteEnabled: new BooleanField(true),
         },
         { showByDefault: false }
       ),
@@ -6676,19 +6751,15 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
       minZoom: new NumberField(0, { min: 0, max: 24, showByDefault: false }),
       maxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
+      maxRequests: new NumberField(24, { min: 0, softMax: 512, showByDefault: false }),
       meshMaxError: new NumberField(4, { min: 0, softMax: 100, showByDefault: false }),
-      // 'grid' tesselator emits a deterministic lng/lat vertex grid — much
-      // faster to upload and tesselate than the default 'auto' (martini),
-      // especially at global zooms. Requires the vendored deck.gl fork.
-      tesselator: new StringLiteralField('auto', {
-        values: ['auto', 'grid'],
+      extent: new UnknownField([-Infinity, -Infinity, Infinity, Infinity], {
+        optional: true,
         showByDefault: false,
       }),
-      // Vertices per side for the grid tesselator. Default 65 ≈ 8k tris/tile.
-      gridSize: new NumberField(65, { min: 2, softMax: 257, showByDefault: false }),
-      // Inherited from TileLayer. 'best-available' keeps parent tiles visible
-      // while children refine — avoids visible gaps on wide globe views.
-      refinementStrategy: new StringLiteralField('best-available', {
+      // Inherited from TileLayer. NEW HEAT defaults terrain to no-overlap to
+      // avoid parent/child terrain tiles drawing together during refinement.
+      refinementStrategy: new StringLiteralField('no-overlap', {
         values: ['best-available', 'no-overlap', 'never'],
         showByDefault: false,
       }),
@@ -6701,10 +6772,12 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       bounds: new UnknownField(null, { optional: true }),
       color: new ColorField('#ffffff', { transform: hexToColor }),
       wireframe: new BooleanField(false, { showByDefault: false }),
+      material: new UnknownField(true, { showByDefault: false }),
       operation: new StringField('terrain+draw', { showByDefault: false }),
       parameters: new CompoundPropsField(
         {
           depthTest: new BooleanField(true),
+          cull: new BooleanField(false),
         },
         { showByDefault: false }
       ),

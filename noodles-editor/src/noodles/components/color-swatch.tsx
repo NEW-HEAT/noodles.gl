@@ -6,7 +6,7 @@ import s from '../noodles.module.css'
 
 interface ColorSwatchProps {
   // Color value as hex string (e.g., "#ff0000" or "#ff0000ff") or color array [r, g, b, a]
-  value: string | [number, number, number, number?]
+  value: string | [number, number, number, number?] | unknown
   // Callback when color changes
   onChange: (color: string) => void
   // Whether the swatch is disabled
@@ -44,10 +44,12 @@ export function ColorSwatch({
   const hexValue =
     typeof value === 'string'
       ? value
-      : (() => {
-          const [r, g, b, a = 255] = value
-          return colorToHex([r, g, b, a])
-        })()
+      : Array.isArray(value)
+        ? (() => {
+            const [r = 0, g = 0, b = 0, a = 255] = value
+            return colorToHex([Number(r), Number(g), Number(b), Number(a)])
+          })()
+        : '#000000'
 
   // Handle click outside, escape, wheel, and touch events
   useEffect(() => {

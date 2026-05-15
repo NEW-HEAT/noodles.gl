@@ -1,4 +1,3 @@
-import type { OnMount } from '@monaco-editor/react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Cross2Icon } from '@radix-ui/react-icons'
 import { Handle, Position, useEdges, useNodeId, useReactFlow } from '@xyflow/react'
@@ -8,19 +7,13 @@ import { Button } from 'primereact/button'
 import { InputText } from 'primereact/inputtext'
 import {
   Fragment,
-  Suspense,
-  lazy,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
 
-const CodeiumEditor = lazy(() =>
-  import('@codeium/react-code-editor').then(m => ({ default: m.CodeiumEditor }))
-)
 import { Temporal } from 'temporal-polyfill'
 import { getFieldPath } from '../../timeline/field-bindings'
 import { VectorKeyframeIndicator } from '../../timeline/components/KeyframeIndicator'
@@ -578,7 +571,6 @@ export function CodeFieldComponent({
 }) {
   const [value, setValue] = useState(guardAccessorFallback(field.value))
   const { setEdges, getNode } = useReactFlow()
-  const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const { captureStart, commitChange } = usePropertyHistory()
 
@@ -592,34 +584,8 @@ export function CodeFieldComponent({
   const thisFieldId = `par.${fieldName}`
   const thisOpId = field.op.id
 
-  const handleEditorChange = useCallback(
-    (value: string | undefined, _event) => {
-      if (disabled || value === undefined) return
-      field.setValue(value)
-    },
-    [field, disabled]
-  )
-
-  const handleEditorDidMount: OnMount = useCallback(
-    (editor, _monaco) => {
-      editorRef.current = editor
-      editor.layout()
-      // Capture property state when user begins editing, commit when they stop
-      editor.onDidFocusEditorText(() => captureStart())
-      editor.onDidBlurEditorWidget(() => commitChange('Change code'))
-    },
-    [captureStart, commitChange]
-  )
-
-  // Force layout update on load and when node height changes
-  useLayoutEffect(() => {
-    if (editorRef.current) {
-      editorRef.current.layout()
-    }
-  }, [])
-
   useEffect(() => {
-    const sub = field.subscribe(_ => {
+    const sub = field.subscribe(() => {
       setValue(field.value)
     })
     return () => sub.unsubscribe()
@@ -688,39 +654,34 @@ export function CodeFieldComponent({
     })
   }, [fieldReferences, thisOpId, thisFieldId, nodeId, setEdges])
 
+  const editorValue = typeof value === 'string' ? value : String(field.value ?? '')
+
   return (
     <div className={cx(s.fieldWrapper, s.fieldWrapperCode)} ref={containerRef}>
       <div className={s.fieldInputWrapperCodeEditor}>
-        <Suspense
-          fallback={
-            <textarea
-              style={{ width: '100%', height: nodeHeight - 80, background: '#1e1e1e', color: '#d4d4d4' }}
-              value={value}
-              onChange={e => field.setValue(e.target.value)}
-            />
-          }
-        >
-          <CodeiumEditor
-            language={field.language}
-            options={{
-              tabSize: 2,
-              scrollBeyondLastLine: false,
-              minimap: { enabled: false },
-              automaticLayout: true,
-              fixedOverflowWidgets: true,
-              scrollbar: {
-                vertical: 'visible',
-                horizontal: 'visible',
-              },
-            }}
-            theme="vs-dark"
-            width="100%"
-            height={nodeHeight - 80}
-            defaultValue={field.value}
-            onChange={handleEditorChange}
-            onMount={handleEditorDidMount}
-          />
-        </Suspense>
+        <textarea
+          className={s.fieldTextarea}
+          style={{
+            width: '100%',
+            height: nodeHeight - 80,
+            minHeight: 120,
+            background: '#1e1e1e',
+            color: '#d4d4d4',
+            fontFamily: 'Menlo, Monaco, Consolas, "Courier New", monospace',
+            fontSize: 12,
+          }}
+          value={editorValue}
+          disabled={disabled}
+          spellCheck={false}
+          aria-label={`${field.language} code`}
+          onFocus={captureStart}
+          onBlur={() => commitChange('Change code')}
+          onChange={event => {
+            const nextValue = event.currentTarget.value
+            setValue(nextValue)
+            field.setValue(nextValue)
+          }}
+        />
       </div>
     </div>
   )

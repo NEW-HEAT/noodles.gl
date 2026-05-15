@@ -14,6 +14,7 @@ import {
   FilterOp,
   GeoJsonLayerOp,
   GeoJsonTransformOp,
+  GlobeViewOp,
   JSONOp,
   KmlToGeoJsonOp,
   LayerPropsOp,
@@ -2427,6 +2428,47 @@ describe('Tile3DLayerOp', () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const { layer } = await op.execute({ tilesetUrl: '', provider: 'Cesium' })
     expect(layer.data).toEqual(CESIUM_URL)
+  })
+
+  it('passes tile budget options into the Google Tileset3D constructor', async () => {
+    const op = new Tile3DLayerOp('/tile3d-0')
+    const { layer } = await op.execute({
+      provider: 'Google',
+      throttleRequests: true,
+      maxRequests: 128,
+      loadSiblings: true,
+      maxScreenSpaceError: 8,
+      maxMemoryUsage: 4096,
+      memoryAdjustedScreenSpaceError: false,
+    })
+    expect(layer.loadOptions.tileset).toMatchObject({
+      throttleRequests: true,
+      maxRequests: 128,
+      loadSiblings: true,
+      maximumScreenSpaceError: 8,
+      maximumMemoryUsage: 4096,
+      memoryAdjustedScreenSpaceError: false,
+    })
+  })
+
+  it('exposes explicit GlobeView clip plane overrides', () => {
+    const op = new GlobeViewOp('/globe-view')
+    const { view } = op.execute({
+      nearZ: 0.001,
+      farZ: 1000000,
+      nearZMultiplier: 0.001,
+      farZMultiplier: 64,
+      viewState: {
+        longitude: -81.3,
+        latitude: 28.9,
+        zoom: 16,
+      },
+    })
+
+    expect(view.props.nearZ).toBe(0.001)
+    expect(view.props.farZ).toBe(1000000)
+    expect(view.props.nearZMultiplier).toBe(0.001)
+    expect(view.props.farZMultiplier).toBe(64)
   })
 
   it('hides tilesetUrl by default', () => {

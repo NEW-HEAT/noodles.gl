@@ -105,6 +105,24 @@ import { calculateViewerPosition } from './utils/viewer-position'
 
 const ChatPanel = lazy(() => import('../ai-chat/chat-panel').then(m => ({ default: m.ChatPanel })))
 
+export type EmbeddedNoodlesProject = {
+  name?: string
+  project: NoodlesProjectJSON
+}
+
+export interface GetNoodlesOptions {
+  embeddedProject?: EmbeddedNoodlesProject | null
+  externalRuntime?: boolean
+}
+
+function getEmbeddedNoodlesProject(): EmbeddedNoodlesProject | null {
+  if (typeof window === 'undefined') return null
+  return (
+    (window as unknown as { __NOODLES_EMBEDDED_PROJECT__?: EmbeddedNoodlesProject })
+      .__NOODLES_EMBEDDED_PROJECT__ ?? null
+  )
+}
+
 /*
  * CSS Architecture:
  * - layers.css: Establishes CSS layers and imports vendor CSS into 'vendors' layer
@@ -133,7 +151,14 @@ const defaultEdgeOptions: DefaultEdgeOptions = {
   animated: false,
 }
 
+const tileLayerTypes = new Set(['MVTLayer', 'TileLayer', 'RasterTileLayer'])
+
+function shouldSkipLayerInstantiation(type: string, layer: Record<string, unknown>) {
+  return layer.visible === false && tileLayerTypes.has(type) && (layer.data == null || layer.data === '')
+}
+
 // Syncs edge data from React Flow store to centralized EdgeConnectionStore for O(1) lookups
+// eslint-disable-next-line react-refresh/only-export-components
 function EdgeConnectionSynchronizer() {
   const store = useStoreApi()
 
@@ -149,12 +174,14 @@ function EdgeConnectionSynchronizer() {
   return null
 }
 
-export function getNoodles(): Visualization {
+export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
   const [location, navigate] = useLocation()
   const params = useParams()
+  const embeddedProject = options.embeddedProject ?? getEmbeddedNoodlesProject()
+  const externalRuntime = options.externalRuntime ?? false
 
   // Get projectId from route params (/examples/:projectId or /projects/:projectId) - router is single source of truth
-  const projectName = params.projectId ?? null
+  const projectName = params.projectId ?? embeddedProject?.name ?? null
 
   // Detect if we're on /projects or /examples route to preserve it when navigating
   const routePrefix = location.startsWith('/projects/') ? '/projects' : '/examples'
@@ -276,9 +303,13 @@ export function getNoodles(): Visualization {
   useEffect(() => {
     // loadProjectFile already called transformGraph directly, so skip this triggered re-run
     if (isProjectLoadRef.current) return
+    if (externalRuntime) {
+      setOperators(getOpStore().getAllOps() as Operator<IOperator>[])
+      return
+    }
     const ops = transformGraph({ nodes, edges })
     setOperators(ops)
-  }, [graphStructureKey])
+  }, [graphStructureKey, externalRuntime])
 
   // Reset isProjectLoadRef after every render so the flag never gets stuck when
   // graphStructureKey doesn't change (e.g. re-loading the same project, undo of position-only drag).
@@ -643,12 +674,14 @@ export function getNoodles(): Visualization {
 
       currentProjectRef.current = project
 
-      // Dispose all old operators cleanly (executionState.complete() + unsubscribeListeners)
       const store = getOpStore()
-      for (const op of store.getAllOps()) {
-        op.dispose()
+      if (!externalRuntime) {
+        // Dispose all old operators cleanly (executionState.complete() + unsubscribeListeners)
+        for (const op of store.getAllOps()) {
+          op.dispose()
+        }
+        store.clearOps()
       }
-      store.clearOps()
 
       // Load timeline state before transformGraph so field bindings see the right keyframe data
       clearAllBindings()
@@ -666,8 +699,12 @@ export function getNoodles(): Visualization {
         timelineStore.reset()
       }
 
-      // Build the operator graph synchronously — operators are ready before any re-render
-      const ops = transformGraph({ nodes, edges })
+      // Build the operator graph synchronously — operators are ready before any re-render.
+      // In externalRuntime mode the host already owns transformGraph/clearOps; the editor
+      // binds UI/timeline controls to the existing operator store instead of replacing it.
+      const ops = externalRuntime
+        ? (store.getAllOps() as Operator<IOperator>[])
+        : transformGraph({ nodes, edges })
       setOperators(ops)
 
       // Update React Flow state (for rendering; graph is already set up above)
@@ -692,11 +729,22 @@ export function getNoodles(): Visualization {
 
       // Navigate to the project URL
       const effectiveRoutePrefix = targetRoutePrefix ?? routePrefix
-      navigate(name ? `${effectiveRoutePrefix}/${name}` : '/', { replace: true })
+      if (!embeddedProject) {
+        navigate(name ? `${effectiveRoutePrefix}/${name}` : '/', { replace: true })
+      }
 
       setHasUnsavedChanges(false)
     },
-    [setNodes, setEdges, navigate, routePrefix, timelineStore.fromTheatreJSON, timelineStore.reset]
+    [
+      setNodes,
+      setEdges,
+      navigate,
+      routePrefix,
+      timelineStore.fromTheatreJSON,
+      timelineStore.reset,
+      externalRuntime,
+      embeddedProject,
+    ]
   )
 
   // Assign to ref for undo/redo system
@@ -715,6 +763,21 @@ export function getNoodles(): Visualization {
       }
 
       // If no projectName, load the default new project
+      const embedded = embeddedProject
+      if (embedded) {
+        try {
+          const project = await migrateProject({
+            ...EMPTY_PROJECT,
+            ...embedded.project,
+          } as NoodlesProjectJSON)
+          loadProjectFile(project, embedded.name)
+          return
+        } catch (_error) {
+          debugApp('Failed to load embedded project:', _error)
+        }
+        return
+      }
+
       if (!projectName || projectName === 'new') {
         try {
           loadProjectFile(newProjectJSON as NoodlesProjectJSON)
@@ -1501,7 +1564,9 @@ export function getNoodles(): Visualization {
         ({ deckProps: { layers, widgets, ...deckProps }, mapProps }) => {
           // Map layers from POJOs to deck.gl instances
           const instantiatedLayers =
-            layers?.map(({ type, extensions, ...layer }) => {
+            layers?.flatMap(({ type, extensions, ...layer }) => {
+              if (shouldSkipLayerInstantiation(type, layer)) return []
+
               // Instantiate extensions from POJOs if present
               let instantiatedExtensions: LayerExtension[] | undefined
               if (extensions && Array.isArray(extensions)) {

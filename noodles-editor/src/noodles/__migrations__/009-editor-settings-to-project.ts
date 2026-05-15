@@ -8,7 +8,7 @@ import type { EditorSettings, NoodlesProjectJSON } from '../utils/serialization'
 // 3. Removes the editor object from Theatre.js staticOverrides to clean up
 
 export async function up(project: NoodlesProjectJSON): Promise<NoodlesProjectJSON> {
-  const { timeline, ...rest } = project
+  const { timeline, editorSettings: existingEditorSettings, ...rest } = project
 
   // Extract editor settings from Theatre.js staticOverrides
   const sheetsById = (timeline as any)?.sheetsById || {}
@@ -19,8 +19,11 @@ export async function up(project: NoodlesProjectJSON): Promise<NoodlesProjectJSO
 
   // Create editor settings object with defaults
   const editorSettings: EditorSettings = {
-    layoutMode: editorOverrides.layoutMode || 'noodles-on-top',
-    showOverlay: editorOverrides.showOverlay !== undefined ? editorOverrides.showOverlay : true,
+    layoutMode:
+      existingEditorSettings?.layoutMode ?? editorOverrides.layoutMode ?? 'noodles-on-top',
+    showOverlay:
+      existingEditorSettings?.showOverlay ?? editorOverrides.showOverlay ?? true,
+    showDebugInfo: existingEditorSettings?.showDebugInfo,
   }
 
   // Remove editor from staticOverrides

@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Cross2Icon } from '@radix-ui/react-icons'
 import { useEffect, useState } from 'react'
-import { getEnvKeys, useKeysStore } from '../noodles/keys-store'
+import { getEnvKeys, type KeysConfig, useKeysStore } from '../noodles/keys-store'
 import { analytics } from '../utils/analytics'
 import s from './settings-dialog.module.css'
 
@@ -9,6 +9,8 @@ interface SettingsDialogProps {
   open: boolean
   setOpen: (open: boolean) => void
 }
+
+const EMPTY_KEYS: KeysConfig = {}
 
 // Component that groups all sources (browser, project, env) for a single key type
 interface KeyGroupProps {
@@ -114,7 +116,7 @@ export function SettingsDialog({ open, setOpen }: SettingsDialogProps) {
   // Store subscriptions
   const browserKeys = useKeysStore(state => state.browserKeys)
   const saveInProject = useKeysStore(state => state.saveInProject)
-  const projectKeys = useKeysStore(state => state.projectKeys || {})
+  const projectKeys = useKeysStore(state => state.projectKeys ?? EMPTY_KEYS)
   const setBrowserKey = useKeysStore(state => state.setBrowserKey)
   const setSaveInProjectAction = useKeysStore(state => state.setSaveInProject)
   const getActiveSource = useKeysStore(state => state.getActiveSource)

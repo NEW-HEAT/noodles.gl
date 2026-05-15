@@ -1,9 +1,16 @@
-import type { Deck, DeckProps } from '@deck.gl/core'
+import { _GlobeController as GlobeController, type Deck, type DeckProps } from '@deck.gl/core'
 import { MapboxOverlay, type MapboxOverlayProps } from '@deck.gl/mapbox'
 import { DeckGL } from '@deck.gl/react'
 import { ReactFlowProvider } from '@xyflow/react'
 import type { Map as MapLibre } from 'maplibre-gl'
-import { forwardRef, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import ReactMapGL, { type MapProps, useControl } from 'react-map-gl/maplibre'
 import { Layout } from './layout'
 import { ErrorBoundary } from './noodles/components/error-boundary'
@@ -12,7 +19,9 @@ import { ExportActionsProvider } from './noodles/contexts/export-actions-context
 import { useActiveStorageType, useCurrentDirectory } from './noodles/filesystem-store'
 import { useActiveOutOp } from './noodles/hooks/use-active-outop'
 import { useRenderSettings } from './noodles/hooks/use-render-settings'
-import { getNoodles } from './noodles/noodles'
+import { getNoodles, type EmbeddedNoodlesProject } from './noodles/noodles'
+import { getOp } from './noodles/store'
+import { forceUpdate } from './noodles/transform-graph'
 import type { RenderSettings } from './noodles/utils/serialization'
 import { useDeckDrawLoop } from './render/draw-loop'
 import { captureScreenshot, useRenderer } from './render/renderer'
@@ -23,6 +32,8 @@ import s from './timeline-editor.module.css'
 import { debugRender } from './utils/debug'
 import setRef from './utils/set-ref'
 import { workerSetTimeout } from './utils/worker-timer'
+
+const CAMERA_FIELD_NAMES = ['longitude', 'latitude', 'zoom', 'pitch', 'bearing'] as const
 
 function useSequenceLength() {
   return useTimelineStore(state => state.sequence.length)
@@ -65,16 +76,31 @@ const DeckGLOverlay = forwardRef<
 
 const isMapReady = (map: MapLibre | null) => !map || (map.isStyleLoaded() && map.areTilesLoaded())
 
-export default function TimelineEditor() {
+export interface TimelineEditorProps {
+  embeddedProject?: EmbeddedNoodlesProject
+  externalRuntime?: boolean
+  viewport?: ReactNode
+}
+
+export default function TimelineEditor({
+  embeddedProject,
+  externalRuntime = false,
+  viewport,
+}: TimelineEditorProps = {}) {
   const mapRef = useRef<MapLibre | null>(null)
   const deckRef = useRef<Deck>(null)
+  const exposedDeckRef = useRef<Deck | null>(null)
   const isRenderingRef = useRef(false)
+  const [interactiveViewState, setInteractiveViewState] = useState<Record<string, unknown> | null>(
+    null
+  )
+  const [deckReadyToken, setDeckReadyToken] = useState(0)
   // Session-only handle set by selectRendersDirectory; takes priority over project subdir
   const rendersDirectoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null)
 
   // Trigger a redraw of React, mapbox and deck when the renderer state changes,
   // to ensure that the VideoStreamReader in renderer.ts runs
-  const [_, setRand] = useState(0)
+  const [, setRand] = useState(0)
   const redraw = useCallback(() => {
     mapRef.current?.redraw()
     deckRef.current?.redraw()
@@ -83,7 +109,7 @@ export default function TimelineEditor() {
     if (!isRenderingRef.current) setRand(Math.random())
   }, [])
 
-  const noodles = getNoodles()
+  const noodles = getNoodles({ embeddedProject, externalRuntime })
   const { flowGraph, nodeSidebar, propertiesPanel, layoutMode, ...visualization } = noodles
 
   // Render settings are now stored as OutOp inputs
@@ -118,15 +144,145 @@ export default function TimelineEditor() {
     })
   isRenderingRef.current = isRendering
 
-  // If the visualization doesn't supply mapProps (or has a blank mapStyle), disable basemap.
-  // A blank mapStyle is treated as transparent — DeckGL renders without map tiles.
-  // TODO: Detect if deck is in othorgraphic mode, and disable?
-  const basemapEnabled = Boolean(visualization.mapProps?.mapStyle)
+  // /world is Deck-native: basemaps, terrain, drape, and interaction are all
+  // deck.gl layers/views. MapLibre remains available in older noodles examples,
+  // but this embedded renderer intentionally never mounts ReactMapGL.
+  const basemapEnabled = false
   // console.log(rgbaToClearColor(mapState.background))
+  const latestViewStateRef = useRef<Record<string, unknown>>({})
+  const lastInteractiveCommitRef = useRef(0)
+
+  useEffect(() => {
+    const graphViewState = visualization.deckProps?.viewState as Record<string, unknown> | undefined
+    if (!graphViewState) return
+    if (Date.now() - lastInteractiveCommitRef.current < 5_000) return
+    latestViewStateRef.current = graphViewState
+    setInteractiveViewState(graphViewState)
+  }, [visualization.deckProps?.viewState])
+
+  const commitDeckViewState = useCallback(
+    (nextViewState: Record<string, unknown>) => {
+      const graphViewState = Object.fromEntries(
+        CAMERA_FIELD_NAMES.flatMap(fieldName => {
+          const value = nextViewState[fieldName]
+          return typeof value === 'number' ? [[fieldName, value]] : []
+        })
+      )
+      const debugWindow = window as Window & {
+        __deckViewStateChanges?: Array<Record<string, unknown>>
+      }
+      debugWindow.__deckViewStateChanges = [
+        ...(debugWindow.__deckViewStateChanges ?? []),
+        graphViewState,
+      ].slice(-10)
+      lastInteractiveCommitRef.current = Date.now()
+      latestViewStateRef.current = graphViewState
+      setInteractiveViewState(graphViewState)
+
+      const viewStateOp = getOp('/view-state') as
+        | {
+            inputs?: Record<
+              string,
+              { setValue?: (value: unknown) => void; next?: (value: unknown) => void }
+            >
+          }
+        | undefined
+
+      for (const fieldName of CAMERA_FIELD_NAMES) {
+        const value = nextViewState[fieldName]
+        if (typeof value !== 'number') continue
+        const field = viewStateOp?.inputs?.[fieldName]
+        if (field?.setValue) field.setValue(value)
+        else field?.next?.(value)
+      }
+
+      forceUpdate()
+    },
+    []
+  )
+
+  const onDeckViewStateChange = useCallback<NonNullable<DeckProps['onViewStateChange']>>(
+    params => {
+      if (Date.now() - lastInteractiveCommitRef.current < 5_000) return
+      commitDeckViewState(params.viewState as Record<string, unknown>)
+      visualization.deckProps?.onViewStateChange?.(params)
+    },
+    [commitDeckViewState, visualization.deckProps]
+  )
+
+  useEffect(() => {
+    if (basemapEnabled) return
+    const deck = deckRef.current
+    // @ts-expect-error canvas is protected but accessible for embedded diagnostics.
+    const canvas = deck?.canvas as HTMLCanvasElement | undefined
+    if (!canvas) return
+    ;(window as Window & { __deckNativeBridgeAttached?: boolean }).__deckNativeBridgeAttached = true
+
+    let lastPointer: { x: number; y: number } | null = null
+
+    const currentViewState = () => latestViewStateRef.current
+    const numeric = (key: (typeof CAMERA_FIELD_NAMES)[number], fallback: number) => {
+      const value = currentViewState()[key]
+      return typeof value === 'number' ? value : fallback
+    }
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const zoom = Math.max(0, Math.min(20, numeric('zoom', 1.5) - event.deltaY * 0.002))
+      commitDeckViewState({ ...currentViewState(), zoom })
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      lastPointer = { x: event.clientX, y: event.clientY }
+      canvas.setPointerCapture?.(event.pointerId)
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!lastPointer) return
+      const zoomScale = Math.max(1, 2 ** numeric('zoom', 1.5))
+      const dx = event.clientX - lastPointer.x
+      const dy = event.clientY - lastPointer.y
+      lastPointer = { x: event.clientX, y: event.clientY }
+
+      const longitude = numeric('longitude', 0) - (dx * 0.35) / zoomScale
+      const latitude = Math.max(
+        -85,
+        Math.min(85, numeric('latitude', 20) + (dy * 0.35) / zoomScale)
+      )
+      commitDeckViewState({ ...currentViewState(), longitude, latitude })
+    }
+
+    const onPointerUp = (event: PointerEvent) => {
+      lastPointer = null
+      canvas.releasePointerCapture?.(event.pointerId)
+    }
+
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    canvas.addEventListener('pointerdown', onPointerDown)
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerup', onPointerUp)
+    canvas.addEventListener('pointercancel', onPointerUp)
+
+    return () => {
+      canvas.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('pointerdown', onPointerDown)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerup', onPointerUp)
+      canvas.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [basemapEnabled, commitDeckViewState, deckReadyToken])
 
   // Track deck.gl rendering stats for Claude AI debugging
   const lastFrameTimeRef = useRef(Date.now())
   const fpsRef = useRef(0)
+
+  const graphViews = visualization.deckProps?.views
+  const graphViewList = Array.isArray(graphViews) ? graphViews : graphViews ? [graphViews] : []
+  const hasInteractiveGlobeView = graphViewList.some(
+    view =>
+      view.constructor.name.includes('Globe') &&
+      (view.props.controller === true || typeof view.props.controller === 'object')
+  )
 
   const deckProps: DeckProps = {
     deviceProps: {
@@ -138,6 +294,10 @@ export default function TimelineEditor() {
     },
     useDevicePixels: false,
     ...visualization.deckProps,
+    controller:
+      visualization.deckProps?.controller ?? (hasInteractiveGlobeView ? GlobeController : undefined),
+    viewState: interactiveViewState ?? visualization.deckProps?.viewState,
+    onViewStateChange: onDeckViewStateChange,
     onDeviceInitialized: device => {
       visualization.deckProps?.onDeviceInitialized?.(device)
       redraw()
@@ -405,6 +565,9 @@ export default function TimelineEditor() {
   const displayResolution = isFixedMode ? lodResolution : undefined
 
   const renderContent = () => {
+    if (viewport !== undefined) {
+      return viewport
+    }
     if (basemapEnabled) {
       return (
         <ReactMapGL style={displayResolution} {...mapProps}>
@@ -419,7 +582,74 @@ export default function TimelineEditor() {
     }
     return (
       <DeckGL
-        ref={ref => setRef(deckRef, ref?.deck)}
+        ref={ref => {
+          const deck = ref?.deck
+          setRef(deckRef, deck)
+          if (!deck) return
+          if (exposedDeckRef.current !== deck) {
+            exposedDeckRef.current = deck
+            setDeckReadyToken(token => token + 1)
+          }
+
+          // @ts-expect-error canvas is protected but accessible for embedded diagnostics.
+          const canvas = deck.canvas
+          if (canvas) {
+            ;(window as Window & { __deckCanvas?: unknown }).__deckCanvas = canvas
+          }
+          ;(window as Window & { __deckInstance?: unknown }).__deckInstance = deck
+
+          const bridgedDeck = deck as Deck & { __newHeatBridgeAttached?: boolean }
+          if (!bridgedDeck.__newHeatBridgeAttached && canvas) {
+            bridgedDeck.__newHeatBridgeAttached = true
+            ;(window as Window & { __deckNativeBridgeAttached?: boolean }).__deckNativeBridgeAttached =
+              true
+
+            let lastPointer: { x: number; y: number } | null = null
+            const currentViewState = () => latestViewStateRef.current
+            const numeric = (key: (typeof CAMERA_FIELD_NAMES)[number], fallback: number) => {
+              const value = currentViewState()[key]
+              return typeof value === 'number' ? value : fallback
+            }
+
+            canvas.addEventListener(
+              'wheel',
+              event => {
+                event.preventDefault()
+                const zoom = Math.max(
+                  0,
+                  Math.min(20, numeric('zoom', 1.5) - event.deltaY * 0.002)
+                )
+                commitDeckViewState({ ...currentViewState(), zoom })
+              },
+              { passive: false }
+            )
+            canvas.addEventListener('pointerdown', event => {
+              lastPointer = { x: event.clientX, y: event.clientY }
+              canvas.setPointerCapture?.(event.pointerId)
+            })
+            canvas.addEventListener('pointermove', event => {
+              if (!lastPointer) return
+              const zoomScale = Math.max(1, 2 ** numeric('zoom', 1.5))
+              const dx = event.clientX - lastPointer.x
+              const dy = event.clientY - lastPointer.y
+              lastPointer = { x: event.clientX, y: event.clientY }
+              commitDeckViewState({
+                ...currentViewState(),
+                longitude: numeric('longitude', 0) - (dx * 0.35) / zoomScale,
+                latitude: Math.max(
+                  -85,
+                  Math.min(85, numeric('latitude', 20) + (dy * 0.35) / zoomScale)
+                ),
+              })
+            })
+            const onPointerDone = (event: PointerEvent) => {
+              lastPointer = null
+              canvas.releasePointerCapture?.(event.pointerId)
+            }
+            canvas.addEventListener('pointerup', onPointerDone)
+            canvas.addEventListener('pointercancel', onPointerDone)
+          }
+        }}
         {...deckProps}
         {...(displayResolution || {})}
       />
