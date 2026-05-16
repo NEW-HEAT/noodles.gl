@@ -6770,6 +6770,10 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
         values: ['best-available', 'no-overlap', 'never'],
         showByDefault: false,
       }),
+      lodStrategy: new StringLiteralField('none', {
+        values: ['none', 'coverage'],
+        showByDefault: false,
+      }),
       elevationDecoder: new CompoundPropsField({
         rScaler: new NumberField(1),
         gScaler: new NumberField(0),
