@@ -6759,6 +6759,8 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
         showByDefault: false,
       }),
       maxRequests: new NumberField(24, { min: 0, softMax: 512, showByDefault: false }),
+      maxCacheSize: new NumberField(256, { min: 0, softMax: 2048, showByDefault: false }),
+      debounceTime: new NumberField(0, { min: 0, softMax: 1000, showByDefault: false }),
       meshMaxError: new NumberField(4, { min: 0, softMax: 100, showByDefault: false }),
       extent: new UnknownField([-Infinity, -Infinity, Infinity, Infinity], {
         optional: true,
