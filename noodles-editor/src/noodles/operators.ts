@@ -6766,13 +6766,12 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
         optional: true,
         showByDefault: false,
       }),
-      // Inherited from TileLayer. NEW HEAT defaults terrain to no-overlap to
-      // avoid parent/child terrain tiles drawing together during refinement.
-      refinementStrategy: new StringLiteralField('no-overlap', {
+      // Keep parent terrain visible while close-in children resolve.
+      refinementStrategy: new StringLiteralField('best-available', {
         values: ['best-available', 'no-overlap', 'never'],
         showByDefault: false,
       }),
-      lodStrategy: new StringLiteralField('none', {
+      lodStrategy: new StringLiteralField('coverage', {
         values: ['none', 'coverage'],
         showByDefault: false,
       }),
