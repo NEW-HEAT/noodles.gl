@@ -6752,7 +6752,7 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
       minZoom: new NumberField(0, { min: 0, max: 24, showByDefault: false }),
       maxZoom: new NumberField(24, { min: 0, max: 24, showByDefault: false }),
       meshMaxZoom: new NumberField(15, { min: 0, max: 24, optional: true, showByDefault: false }),
-      textureMaxZoom: new NumberField(16, {
+      textureMaxZoom: new NumberField(15, {
         min: 0,
         max: 24,
         optional: true,
@@ -6771,7 +6771,7 @@ export class TerrainLayerOp extends Operator<TerrainLayerOp> {
         values: ['best-available', 'no-overlap', 'never'],
         showByDefault: false,
       }),
-      lodStrategy: new StringLiteralField('coverage', {
+      lodStrategy: new StringLiteralField('none', {
         values: ['none', 'coverage'],
         showByDefault: false,
       }),
