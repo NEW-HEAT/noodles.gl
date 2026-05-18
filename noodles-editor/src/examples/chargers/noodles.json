@@ -13,8 +13,8 @@
       }
     },
     {
-      "id": "duckdb-0",
-      "type": "DuckDbOp",
+      "id": "chargers-0",
+      "type": "JSONOp",
       "position": {
         "x": -1264.3775772798185,
         "y": -102.49235227489045
@@ -22,12 +22,7 @@
       "resizing": false,
       "data": {
         "inputs": {
-          "query": [
-            "SELECT AddressInfo.Latitude as lat, AddressInfo.Longitude as lng, *",
-            "FROM read_json_auto(printf('https://api.openchargemap.io/v3/poi/?client=ocm.app.ionic.8.7.0&verbose=false&output=json&maxresults=1000&compact=true&boundingbox=(%f,%f),(%f,%f)&key=%s', {{centroid.out.location.lat}} + 0.5, {{centroid.out.location.lng}} - 0.5, {{centroid.out.location.lat}} - 0.5, {{centroid.out.location.lng}} + 0.5,",
-            "'3967da06-b05f-47b5-8c83-f52cdf1065c2",
-            "'));"
-          ]
+          "text": "[{\"lat\":39.7392,\"lng\":-104.9903,\"name\":\"Denver Union Station\"},{\"lat\":39.7526,\"lng\":-104.9995,\"name\":\"LoDo Charging\"},{\"lat\":39.7420,\"lng\":-104.9870,\"name\":\"Civic Center\"},{\"lat\":39.7710,\"lng\":-104.9733,\"name\":\"RiNo Charging\"}]"
         },
         "locked": false
       },
@@ -164,18 +159,18 @@
   ],
   "edges": [
     {
-      "source": "duckdb-0",
+      "source": "chargers-0",
       "sourceHandle": "data",
       "target": "boundingbox-0",
       "targetHandle": "data",
-      "id": "duckdb-0:data->boundingbox-0:data"
+      "id": "chargers-0:data->boundingbox-0:data"
     },
     {
-      "source": "duckdb-0",
+      "source": "chargers-0",
       "sourceHandle": "data",
       "target": "scatterplotlayer-0",
       "targetHandle": "data",
-      "id": "duckdb-0:data->scatterplotlayer-0:data"
+      "id": "chargers-0:data->scatterplotlayer-0:data"
     },
     {
       "source": "accessor-0",
@@ -220,11 +215,11 @@
       "id": "switch-0:value->deck:layers"
     },
     {
-      "source": "duckdb-0",
+      "source": "chargers-0",
       "sourceHandle": "data",
       "target": "heatmaplayer-0",
       "targetHandle": "data",
-      "id": "duckdb-0:data->heatmaplayer-0:data"
+      "id": "chargers-0:data->heatmaplayer-0:data"
     },
     {
       "source": "accessor-0",
@@ -253,14 +248,6 @@
       "target": "out",
       "sourceHandle": "vis",
       "targetHandle": "vis"
-    },
-    {
-      "id": "centroid:location->duckdb-0:query",
-      "type": "ReferenceEdge",
-      "source": "centroid",
-      "sourceHandle": "location",
-      "target": "duckdb-0",
-      "targetHandle": "query"
     }
   ],
   "viewport": {

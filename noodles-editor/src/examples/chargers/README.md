@@ -1,11 +1,11 @@
-# EV Chargers with Live API Data
+# EV Chargers with Static JSON Data
 
 ## Overview
-This example fetches live EV charging station data from the Open Charge Map API based on a geocoded location (Denver, CO). It demonstrates a complete data pipeline: converting a city name to coordinates, fetching nearby charging stations via API, calculating the bounding box, and displaying results as either individual points (scatterplot) or a density heatmap. The map automatically centers on the data.
+This example renders EV charging station data near Denver, CO from a small static JSON payload. It demonstrates a lightweight data pipeline: geocoding a city, calculating the bounding box, and displaying results as either individual points (scatterplot) or a density heatmap. The map automatically centers on the data.
 
 ## Key Techniques
 - **Geocoder**: `GeocoderOp` with query `"Denver, CO"` converts place name to coordinates
-- **API query**: `DuckDbOp` fetches charging station data from Open Charge Map API
+- **JSON source**: `JSONOp` provides lightweight charging station data
 - **Bounding box**: `BoundingBoxOp` calculates map extent with 200px padding
 - **View state**: `MapViewStateOp` centers map on data at zoom 10.8
 - **Position accessor**: `AccessorOp` with expression `[d.lng, d.lat]` extracts coordinates
@@ -15,22 +15,22 @@ This example fetches live EV charging station data from the Open Charge Map API 
 - **Basemap**: `MaplibreBasemapOp`
 
 ## Data Structure
-The Open Charge Map API returns charging station records with:
-- `AddressInfo.Latitude`, `AddressInfo.Longitude`: Station location
-- Additional fields like operator, connection types, power output
+The JSON source returns records with:
+- `lat`, `lng`: Station location
+- `name`: Display name
 
 ## Node Graph Flow
 ```
-Geocoder → DuckDB (API fetch) → BoundingBox → ViewState → Basemap
+Geocoder → JSON source → BoundingBox → ViewState → Basemap
                                ↘ Position Accessor → Scatterplot Layer → Switch → Deck
                                                    ↘ Heatmap Layer ↗
 ```
 
 ## Use Cases
 This pattern is useful for:
-- Live data dashboards
+- Lightweight data dashboards
 - Location-based services
 - Infrastructure mapping (charging stations, bike shares, transit)
 - Dynamic map applications that respond to user input
-- API integration and real-time data visualization
+- Static and server-backed data visualization
 - Geocoding user locations or place names
