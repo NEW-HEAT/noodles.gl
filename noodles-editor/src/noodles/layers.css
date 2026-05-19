@@ -8,7 +8,7 @@
  * Layer order (lowest to highest priority):
  * 1. vendors - Third-party CSS from node_modules (XYFlow, Deck.gl, PrimeReact, etc.)
  * 2. reset - CSS resets and normalizations
- * 3. base - Base application styles (body, html, root element)
+ * 3. base - Base application styles scoped to noodles components
  * 4. components - Component-specific styles
  * 5. utilities - Utility classes and helpers
  *
@@ -53,37 +53,13 @@
 
 @layer reset {
   /* Remove default browser styling from form elements */
-  fieldset,
-  button,
-  input {
+  .react-flow-wrapper fieldset,
+  .react-flow-wrapper button,
+  .react-flow-wrapper input {
     all: unset;
   }
 }
 
-/* ========================================================================
-   BASE LAYER - Base application styles
-   ======================================================================== */
-
-@layer base {
-  body {
-    margin: 0;
-    font-family:
-      -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell",
-      "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  code {
-    font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
-  }
-
-  #root {
-    height: 100vh;
-    overflow-y: hidden;
-  }
-
-  #deckgl-wrapper {
-    height: 100vh;
-  }
-}
+/* Document-level base styles live in ../index.css for the standalone app.
+   Keep this shared layered CSS free of body/#root rules so embedded noodles
+   surfaces do not restyle the host application. */
