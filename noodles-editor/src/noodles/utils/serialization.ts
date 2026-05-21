@@ -1,4 +1,3 @@
-import type { NodeJSON } from 'SKIP-@xyflow/react'
 import type {
   Edge as ReactFlowEdge,
   ReactFlowJsonObject,
@@ -11,6 +10,8 @@ import type { ExtractProps } from './extract-props'
 import { parseHandleId } from './path-utils'
 
 export { NOODLES_VERSION } from './migrate-schema'
+
+type NodeJSON<_T = unknown> = ReactFlowNode<Record<string, unknown>>
 
 export type EditorSettings = {
   layoutMode?: 'split' | 'noodles-on-top' | 'output-on-top'

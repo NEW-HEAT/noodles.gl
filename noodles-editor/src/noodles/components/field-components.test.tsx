@@ -890,6 +890,19 @@ describe('ColorFieldComponent', () => {
     // Verify field value updated
     expect(field.value).toBe('#0000ffff')
   })
+
+  it('renders accessor-valued color fields without treating the accessor as a swatch color', () => {
+    const field = new ColorField('#ff0000ff', { accessor: true, transform: value => value })
+    act(() => {
+      field.setValue((datum: { color: string }) => datum.color)
+    })
+
+    render(<ColorFieldComponent id="getColor" field={field} disabled={false} />)
+
+    const colorSwatch = screen.getByRole('button', { name: 'Open color picker' })
+    expect(colorSwatch).toBeDisabled()
+    expect(field.value({ color: '#00ff00ff' })).toBe('#00ff00ff')
+  })
 })
 
 describe('NumberFieldComponent edge cases', () => {
@@ -940,6 +953,23 @@ describe('NumberFieldComponent edge cases', () => {
 
     const input = screen.getByRole('spinbutton')
     expect(input).toHaveValue(0)
+  })
+
+  it('renders optional undefined values as an empty number input', () => {
+    const field = new NumberField(undefined, { optional: true })
+    render(<NumberFieldComponent id="test-field" field={field} disabled={false} />)
+
+    const input = screen.getByRole('spinbutton')
+    expect(input).toHaveValue(null)
+  })
+
+  it('does not pass NaN through to the DOM number input', () => {
+    const field = new NumberField(0)
+    field.next(Number.NaN)
+    render(<NumberFieldComponent id="test-field" field={field} disabled={false} />)
+
+    const input = screen.getByRole('spinbutton')
+    expect(input).toHaveValue(null)
   })
 
   it('handles Infinity soft limits - falls back to hard limits', () => {

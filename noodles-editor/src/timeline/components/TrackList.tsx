@@ -34,9 +34,12 @@ export function TrackList({
 
   if (trackArray.length === 0) {
     if (showLabelsOnly) {
+      const label = tracks.size > 0
+        ? `No keyframed properties (${tracks.size} live-bound)`
+        : 'No animated properties'
       return (
         <div className={s.timelineTrackLabelsEmpty}>
-          <div className={s.timelineEmpty}>No animated properties</div>
+          <div className={s.timelineEmpty}>{label}</div>
         </div>
       )
     }

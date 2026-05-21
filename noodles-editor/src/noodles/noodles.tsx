@@ -1,4 +1,3 @@
-import type { AnyNodeJSON } from 'SKIP-@xyflow/react'
 import * as deckWidgets from '@deck.gl/widgets'
 import type {
   Connection,
@@ -31,8 +30,27 @@ import { globalContextManager } from '../ai-chat/global-context-manager'
 import { getPendingQuickStartAction } from '../components/quick-start-modal'
 import { analytics } from '../utils/analytics'
 import { getKeysForProject, getKeysStore } from './keys-store'
+import { resolveLayerConstructor } from './layer-constructor-resolver'
 import newProjectJSON from './new.json'
-import { LegendWidget, type LegendWidgetProps } from './widgets/legend-widget'
+import { LegendWidget } from './widgets/legend-widget'
+
+type DeckWidgetConstructor = new (props: Record<string, unknown>) => unknown
+
+function resolveWidgetConstructor(type: string): DeckWidgetConstructor | null {
+  if (type === 'LegendWidget') {
+    return LegendWidget as unknown as DeckWidgetConstructor
+  }
+
+  const widgets = deckWidgets as Record<string, unknown>
+  const unprefixed = type.replace(/^_/, '')
+  const WidgetClass = widgets[type] ?? widgets[unprefixed]
+  return typeof WidgetClass === 'function' ? (WidgetClass as DeckWidgetConstructor) : null
+}
+
+function flattenWidgetProps(widgets: unknown[] | undefined): unknown[] {
+  if (!Array.isArray(widgets)) return []
+  return widgets.flatMap(widget => (Array.isArray(widget) ? flattenWidgetProps(widget) : [widget]))
+}
 
 // Get URLs for all example noodles.json files (lazy-loaded)
 const exampleProjectUrls = import.meta.glob('../examples/**/noodles.json', {
@@ -105,6 +123,29 @@ import { calculateViewerPosition } from './utils/viewer-position'
 
 const ChatPanel = lazy(() => import('../ai-chat/chat-panel').then(m => ({ default: m.ChatPanel })))
 
+type AnyNodeJSON = ReactFlowNode<Record<string, unknown>>
+
+export type EmbeddedNoodlesProject = {
+  name?: string
+  project: NoodlesProjectJSON
+}
+
+export interface GetNoodlesOptions {
+  embeddedProject?: EmbeddedNoodlesProject | null
+  externalRuntime?: boolean
+}
+
+function getEmbeddedNoodlesProject(): EmbeddedNoodlesProject | null {
+  if (typeof window === 'undefined') return null
+  return (
+    (
+      window as unknown as {
+        __NOODLES_EMBEDDED_PROJECT__?: EmbeddedNoodlesProject
+      }
+    ).__NOODLES_EMBEDDED_PROJECT__ ?? null
+  )
+}
+
 /*
  * CSS Architecture:
  * - layers.css: Establishes CSS layers and imports vendor CSS into 'vendors' layer
@@ -149,12 +190,14 @@ function EdgeConnectionSynchronizer() {
   return null
 }
 
-export function getNoodles(): Visualization {
+export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
   const [location, navigate] = useLocation()
   const params = useParams()
+  const embeddedProject = options.embeddedProject ?? getEmbeddedNoodlesProject()
+  const externalRuntime = options.externalRuntime ?? false
 
   // Get projectId from route params (/examples/:projectId or /projects/:projectId) - router is single source of truth
-  const projectName = params.projectId ?? null
+  const projectName = params.projectId ?? embeddedProject?.name ?? null
 
   // Detect if we're on /projects or /examples route to preserve it when navigating
   const routePrefix = location.startsWith('/projects/') ? '/projects' : '/examples'
@@ -179,7 +222,11 @@ export function getNoodles(): Visualization {
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<AnyNodeJSON>([])
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<ReactFlowEdge<unknown>>([])
-  const [defaultViewport, setDefaultViewport] = useState({ x: 0, y: 0, zoom: 1 })
+  const [defaultViewport, setDefaultViewport] = useState({
+    x: 0,
+    y: 0,
+    zoom: 1,
+  })
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [chatInitialMessage, setChatInitialMessage] = useState<string | undefined>(undefined)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -274,11 +321,12 @@ export function getNoodles(): Visualization {
   // nodes/edges omitted from deps intentionally — only re-run on structural changes, not position updates during drag
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional - graphStructureKey gates this
   useEffect(() => {
+    if (externalRuntime) return
     // loadProjectFile already called transformGraph directly, so skip this triggered re-run
     if (isProjectLoadRef.current) return
     const ops = transformGraph({ nodes, edges })
     setOperators(ops)
-  }, [graphStructureKey])
+  }, [graphStructureKey, externalRuntime])
 
   // Reset isProjectLoadRef after every render so the flag never gets stuck when
   // graphStructureKey doesn't change (e.g. re-loading the same project, undo of position-only drag).
@@ -289,6 +337,7 @@ export function getNoodles(): Visualization {
 
   // Bind timeline tracks for all operators (outside ReactFlow rendering pipeline).
   useEffect(() => {
+    if (externalRuntime) return
     const newCleanupFns = new Map<string, () => void>()
     const currentOperatorIds = new Set(operators.map(op => op.id))
 
@@ -306,7 +355,7 @@ export function getNoodles(): Visualization {
         cleanup()
       }
     }
-  }, [operators])
+  }, [operators, externalRuntime])
 
   // Use shared hook for project modifications
   const {
@@ -449,7 +498,10 @@ export function getNoodles(): Visualization {
       )
       setTargetedEdge(
         edge
-          ? { id: edge.id, compatible: connectionDragState.compatibleEdgeIds.has(edge.id) }
+          ? {
+              id: edge.id,
+              compatible: connectionDragState.compatibleEdgeIds.has(edge.id),
+            }
           : null
       )
     },
@@ -643,31 +695,39 @@ export function getNoodles(): Visualization {
 
       currentProjectRef.current = project
 
-      // Dispose all old operators cleanly (executionState.complete() + unsubscribeListeners)
       const store = getOpStore()
-      for (const op of store.getAllOps()) {
-        op.dispose()
-      }
-      store.clearOps()
-
-      // Load timeline state before transformGraph so field bindings see the right keyframe data
-      clearAllBindings()
-      const hasTimeline = timeline && Object.keys(timeline).length > 0
-      if (hasTimeline) {
-        try {
-          // Timeline data uses a Theatre.js-compatible JSON format for backwards compatibility.
-          timelineStore.fromTheatreJSON(
-            timeline as unknown as import('../timeline/types').TheatreTimelineData
-          )
-        } catch (error) {
-          console.error('Failed to load timeline:', error)
+      if (!externalRuntime) {
+        // Dispose all old operators cleanly (executionState.complete() + unsubscribeListeners)
+        for (const op of store.getAllOps()) {
+          op.dispose()
         }
-      } else {
-        timelineStore.reset()
+        store.clearOps()
+      }
+
+      // Load timeline state before transformGraph so field bindings see the right keyframe data.
+      // In externalRuntime mode the host app owns the shared timeline store. Loading an embedded
+      // project here would reset live playback position/length just because the debug editor opened.
+      if (!externalRuntime) {
+        clearAllBindings()
+        const hasTimeline = timeline && Object.keys(timeline).length > 0
+        if (hasTimeline) {
+          try {
+            // Timeline data uses a Theatre.js-compatible JSON format for backwards compatibility.
+            timelineStore.fromTheatreJSON(
+              timeline as unknown as import('../timeline/types').TheatreTimelineData
+            )
+          } catch (error) {
+            console.error('Failed to load timeline:', error)
+          }
+        } else {
+          timelineStore.reset()
+        }
       }
 
       // Build the operator graph synchronously — operators are ready before any re-render
-      const ops = transformGraph({ nodes, edges })
+      const ops = externalRuntime
+        ? (store.getAllOps() as Operator<IOperator>[])
+        : transformGraph({ nodes, edges })
       setOperators(ops)
 
       // Update React Flow state (for rendering; graph is already set up above)
@@ -692,11 +752,24 @@ export function getNoodles(): Visualization {
 
       // Navigate to the project URL
       const effectiveRoutePrefix = targetRoutePrefix ?? routePrefix
-      navigate(name ? `${effectiveRoutePrefix}/${name}` : '/', { replace: true })
+      if (!embeddedProject) {
+        navigate(name ? `${effectiveRoutePrefix}/${name}` : '/', {
+          replace: true,
+        })
+      }
 
       setHasUnsavedChanges(false)
     },
-    [setNodes, setEdges, navigate, routePrefix, timelineStore.fromTheatreJSON, timelineStore.reset]
+    [
+      setNodes,
+      setEdges,
+      navigate,
+      routePrefix,
+      timelineStore.fromTheatreJSON,
+      timelineStore.reset,
+      externalRuntime,
+      embeddedProject,
+    ]
   )
 
   // Assign to ref for undo/redo system
@@ -711,6 +784,21 @@ export function getNoodles(): Visualization {
       // skip loading from storage to avoid showing the "Project Not Found" dialog
       if (isProgrammaticLoadRef.current) {
         isProgrammaticLoadRef.current = false
+        return
+      }
+
+      const embedded = embeddedProject
+      if (embedded) {
+        try {
+          const project = await migrateProject({
+            ...EMPTY_PROJECT,
+            ...embedded.project,
+          } as NoodlesProjectJSON)
+          loadProjectFile(project, embedded.name)
+          return
+        } catch (_error) {
+          debugApp('Failed to load embedded project:', _error)
+        }
         return
       }
 
@@ -782,7 +870,7 @@ export function getNoodles(): Visualization {
         }
       }
     })()
-  }, [projectName, isExamplesRoute])
+  }, [projectName, isExamplesRoute, embeddedProject])
 
   // Handle pending quick start actions (file upload or LLM question from quick start modal)
   const pendingActionHandledRef = useRef(false)
@@ -842,7 +930,11 @@ export function getNoodles(): Visualization {
   const getNoodlesProjectJson = useCallback((): NoodlesProjectJSON => {
     const store = getOpStore()
     const timeline = timelineStore.toTheatreJSON() as unknown as Record<string, unknown>
-    const viewport = reactFlowInstanceRef.current?.getViewport() || { x: 0, y: 0, zoom: 1 }
+    const viewport = reactFlowInstanceRef.current?.getViewport() || {
+      x: 0,
+      y: 0,
+      zoom: 1,
+    }
     const projectKeys = getKeysForProject()
     // Render settings are now stored as OutOp inputs, serialized with the node
 
@@ -1255,11 +1347,15 @@ export function getNoodles(): Visualization {
           // Create nested directory structure
           let currentDir = directoryHandle
           for (const folder of subfolders) {
-            currentDir = await currentDir.getDirectoryHandle(folder, { create: true })
+            currentDir = await currentDir.getDirectoryHandle(folder, {
+              create: true,
+            })
           }
 
           // Write file in the nested directory
-          const fileHandle = await currentDir.getFileHandle(fileName, { create: true })
+          const fileHandle = await currentDir.getFileHandle(fileName, {
+            create: true,
+          })
           const writable = await fileHandle.createWritable()
           await writable.write(content)
           await writable.close()
@@ -1338,7 +1434,9 @@ export function getNoodles(): Visualization {
           setCurrentDirectory(result.data.directoryHandle, finalProjectName)
           // Set storage type to fileSystemAccess since we used File System Access API
           setActiveStorageType('fileSystemAccess')
-          analytics.track('project_opened', { storageType: 'fileSystemAccess' })
+          analytics.track('project_opened', {
+            storageType: 'fileSystemAccess',
+          })
         } else {
           setError(result.error)
           analytics.track('project_open_failed', {
@@ -1530,14 +1628,24 @@ export function getNoodles(): Visualization {
                   .filter((e): e is LayerExtension => e !== null)
               }
 
-              // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl layer types dynamically
-              return new deck[type]({
-                ...layer,
-                ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
-                // Prevent deck.gl layer errors from crashing the GPU process
-                onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
-              })
-            }) || []
+              const LayerClass = resolveLayerConstructor(type)
+              if (!LayerClass) {
+                debugApp(`Unknown layer type: ${type}`)
+                return null
+              }
+
+              try {
+                return new LayerClass({
+                  ...layer,
+                  ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
+                  // Prevent deck.gl layer errors from crashing the GPU process
+                  onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
+                })
+              } catch (error) {
+                debugVis('Failed to instantiate layer %s: %o', type, error)
+                return null
+              }
+            }).filter(layer => layer !== null) || []
 
           // Add overlay layer for selected GeoJSON features
           if (selectedGeoJsonFeatures.length > 0) {
@@ -1567,12 +1675,27 @@ export function getNoodles(): Visualization {
             deckProps: {
               ...deckProps,
               layers: instantiatedLayers,
-              widgets: widgets?.map(({ type, ...widget }) => {
-                if (type === 'LegendWidget')
-                  return new LegendWidget(widget as unknown as LegendWidgetProps)
-                // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl widget types dynamically
-                return new deckWidgets[type](widget)
-              }),
+              widgets: flattenWidgetProps(widgets).map(widgetProps => {
+                if (!widgetProps || typeof widgetProps !== 'object') return null
+                const { type, ...widget } = widgetProps as {
+                  type?: unknown
+                  [key: string]: unknown
+                }
+                if (typeof type !== 'string') return null
+
+                const WidgetClass = resolveWidgetConstructor(type)
+                if (!WidgetClass) {
+                  debugApp(`Unknown widget type: ${type}`)
+                  return null
+                }
+
+                try {
+                  return new WidgetClass(widget as Record<string, unknown>)
+                } catch (error) {
+                  debugVis('Failed to instantiate widget %s: %o', type, error)
+                  return null
+                }
+              }).filter(widget => widget !== null),
             },
             mapProps,
           })

@@ -6,7 +6,7 @@ import s from '../noodles.module.css'
 
 interface ColorSwatchProps {
   // Color value as hex string (e.g., "#ff0000" or "#ff0000ff") or color array [r, g, b, a]
-  value: string | [number, number, number, number?]
+  value: unknown
   // Callback when color changes
   onChange: (color: string) => void
   // Whether the swatch is disabled
@@ -15,6 +15,17 @@ interface ColorSwatchProps {
   onPickerOpen?: () => void
   // Called when the color picker closes (after all color changes are complete)
   onPickerClose?: () => void
+}
+
+function normalizeColorValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const [r, g, b, a = 255] = value
+    if ([r, g, b, a].every(channel => typeof channel === 'number' && Number.isFinite(channel))) {
+      return colorToHex([r, g, b, a])
+    }
+  }
+  return '#00000000'
 }
 
 // ColorSwatch - A color picker component
@@ -41,13 +52,7 @@ export function ColorSwatch({
   const swatchRef = useRef<HTMLButtonElement>(null)
 
   // Convert value to hex string for display
-  const hexValue =
-    typeof value === 'string'
-      ? value
-      : (() => {
-          const [r, g, b, a = 255] = value
-          return colorToHex([r, g, b, a])
-        })()
+  const hexValue = normalizeColorValue(value)
 
   // Handle click outside, escape, wheel, and touch events
   useEffect(() => {

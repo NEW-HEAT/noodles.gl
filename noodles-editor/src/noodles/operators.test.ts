@@ -28,6 +28,7 @@ import {
   RerouteOp,
   ScatterplotLayerOp,
   SelectOp,
+  SkyboxLayerOp,
   SwitchOp,
   Tile3DLayerOp,
   TimeSeriesOp,
@@ -705,6 +706,51 @@ describe('ScatterplotLayerOp', () => {
     })
     expect(layer.updateTriggers).toEqual({ getPosition: ['test'] })
     expect(layer.otherProp).toEqual(1)
+  })
+})
+
+describe('SkyboxLayerOp', () => {
+  it('creates a skybox layer POJO for downstream deck instantiation', () => {
+    const operator = new SkyboxLayerOp('/skybox')
+    const cubemap = {
+      shape: 'image-texture-cube',
+      faces: {
+        '+X': '/sky/posx.jpg',
+        '-X': '/sky/negx.jpg',
+        '+Y': '/sky/posy.jpg',
+        '-Y': '/sky/negy.jpg',
+        '+Z': '/sky/posz.jpg',
+        '-Z': '/sky/negz.jpg',
+      },
+    }
+
+    const { layer } = operator.execute({
+      visible: true,
+      opacity: 0.75,
+      cubemap,
+      orientation: 'y-up',
+      parameters: {
+        cullMode: 'front',
+        depthTest: false,
+        depthWriteEnabled: false,
+        depthCompare: 'always',
+      },
+    })
+
+    expect(layer).toMatchObject({
+      id: '/skybox',
+      type: 'SkyboxLayer',
+      visible: true,
+      opacity: 0.75,
+      cubemap,
+      orientation: 'y-up',
+      parameters: {
+        cullMode: 'front',
+        depthTest: false,
+        depthWriteEnabled: false,
+        depthCompare: 'always',
+      },
+    })
   })
 })
 
@@ -2438,6 +2484,43 @@ describe('Tile3DLayerOp', () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const values = op.inputs.provider.choices.map(c => c.value)
     expect(values).toContain('Generic')
+  })
+
+  it('passes tile loading budget options through to Tile3DLayer', async () => {
+    const op = new Tile3DLayerOp('/tile3d-0')
+    const { layer } = await op.execute({
+      provider: 'Generic',
+      tilesetUrl: 'https://example.com/custom/tileset.json',
+      throttleRequests: true,
+      maxRequests: 12,
+      loadSiblings: false,
+      maxScreenSpaceError: 20,
+      maxMemoryUsage: 512,
+      memoryAdjustedScreenSpaceError: true,
+    })
+
+    expect(layer.loadOptions?.tileset).toMatchObject({
+      throttleRequests: true,
+      maxRequests: 12,
+      loadSiblings: false,
+      maximumScreenSpaceError: 20,
+      maximumMemoryUsage: 512,
+      memoryAdjustedScreenSpaceError: true,
+    })
+
+    const setProps = vi.fn()
+    const tileset = { maximumMemoryUsage: 0, setProps, options: {} }
+    layer.onTilesetLoad(tileset as never)
+    expect(setProps).toHaveBeenCalledWith(
+      expect.objectContaining({
+        throttleRequests: true,
+        maxRequests: 12,
+        loadSiblings: false,
+        maximumScreenSpaceError: 20,
+        maximumMemoryUsage: 512,
+        memoryAdjustedScreenSpaceError: true,
+      })
+    )
   })
 })
 

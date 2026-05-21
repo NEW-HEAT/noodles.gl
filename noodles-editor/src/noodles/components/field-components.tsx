@@ -111,6 +111,20 @@ function guardAccessorFallback<V>(value: V): V | (() => V) {
   return typeof value === 'function' ? () => value : value
 }
 
+function normalizeNumberInputValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function formatNumberInputValue(value: number | undefined): string {
+  return value === undefined ? '' : value.toString()
+}
+
+function parseNumberInputValue(value: string): number | undefined {
+  if (value === '') return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 const formatText = (val: unknown) =>
   typeof val === 'function'
     ? 'function'
@@ -1130,7 +1144,7 @@ function DraggableNumberInput({
   title,
 }: {
   id?: string
-  value: number
+  value?: number
   disabled: boolean
   onChange: (val: number) => void
   onCommit?: () => void
@@ -1143,7 +1157,7 @@ function DraggableNumberInput({
   className?: string
   title?: string
 }) {
-  const [displayValue, setDisplayValue] = useState<string>(value?.toString() ?? '0')
+  const [displayValue, setDisplayValue] = useState<string>(() => formatNumberInputValue(value))
   const [isActive, setIsActive] = useState<boolean>(false)
   const [currentStepMultiplier, setCurrentStepMultiplier] = useState<number>(1)
   const [isDragStarted, setIsDragStarted] = useState<boolean>(false)
@@ -1157,7 +1171,7 @@ function DraggableNumberInput({
   const ladderTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    setDisplayValue(value?.toString() ?? '0')
+    setDisplayValue(formatNumberInputValue(value))
   }, [value])
 
   useEffect(() => {
@@ -1186,9 +1200,10 @@ function DraggableNumberInput({
   const onInputChange = useCallback(
     (e: React.FormEvent<HTMLInputElement>) => {
       const newValue = e.currentTarget.value
+      const parsedValue = parseNumberInputValue(newValue)
       setDisplayValue(newValue)
-      if (!(+newValue === 0 && newValue.length !== 1)) {
-        onChange(+newValue)
+      if (parsedValue !== undefined && !(parsedValue === 0 && newValue.length !== 1)) {
+        onChange(parsedValue)
       }
     },
     [onChange]
@@ -1208,7 +1223,7 @@ function DraggableNumberInput({
       }
 
       onInteractionStart?.()
-      startValueRef.current = value
+      startValueRef.current = value ?? 0
       setInitialMousePos({
         x: 'clientX' in e ? e.clientX : touchEvent.touches[0].clientX,
         y: 'clientY' in e ? e.clientY : touchEvent.touches[0].clientY,
@@ -1278,8 +1293,11 @@ function DraggableNumberInput({
 
   const shouldShowLadder = showLadder && isDragStarted && !isHorizontalLockedRef.current
   const containerRect = containerRef.current?.getBoundingClientRect()
+  const parsedDisplayValue = parseNumberInputValue(displayValue)
   const formatted =
-    displayValue === '' ? '' : Math.round((+displayValue + Number.EPSILON) * 100) / 100
+    parsedDisplayValue === undefined
+      ? ''
+      : Math.round((parsedDisplayValue + Number.EPSILON) * 100) / 100
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: Number input wrapper with drag interaction requires div with role
@@ -1336,13 +1354,14 @@ export function NumberFieldComponent({
   field: NumberField
   disabled: boolean
 }) {
-  const [value, setValue] = useState<number>(guardAccessorFallback(field.value))
+  const [value, setValue] = useState<number | undefined>(() =>
+    normalizeNumberInputValue(guardAccessorFallback(field.value))
+  )
   const { captureStart, commitChange } = usePropertyHistory()
 
   useEffect(() => {
     const sub = field.subscribe(newVal => {
-      if (typeof newVal === 'function') return
-      setValue(newVal)
+      setValue(normalizeNumberInputValue(guardAccessorFallback(newVal)))
     })
     return () => sub.unsubscribe()
   }, [field])
@@ -1373,7 +1392,7 @@ export function NumberFieldComponent({
         softMax={field.softMax}
         step={field.step}
         className={cx(s.fieldInput, s.fieldInputNumber)}
-        title={value.toString()}
+        title={formatNumberInputValue(value)}
       />
     </div>
   )
@@ -1490,13 +1509,13 @@ export function ColorFieldComponent({
   field: ColorField
   disabled: boolean
 }) {
-  const [value, setValue] = useState(guardAccessorFallback(field.value))
+  const [value, setValue] = useState<unknown>(() => field.value)
   const { captureStart, commitChange } = usePropertyHistory()
+  const isAccessorValue = typeof value === 'function'
 
   useEffect(() => {
     const sub = field.subscribe(newVal => {
-      if (typeof newVal === 'function') return
-      setValue(newVal)
+      setValue(guardAccessorFallback(newVal))
     })
     return () => sub.unsubscribe()
   }, [field])
@@ -1517,7 +1536,7 @@ export function ColorFieldComponent({
         <ColorSwatch
           value={value}
           onChange={handleColorChange}
-          disabled={disabled}
+          disabled={disabled || isAccessorValue}
           onPickerOpen={captureStart}
           onPickerClose={() => commitChange('Change color')}
         />
