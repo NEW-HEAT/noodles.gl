@@ -31,6 +31,7 @@ import { globalContextManager } from '../ai-chat/global-context-manager'
 import { getPendingQuickStartAction } from '../components/quick-start-modal'
 import { analytics } from '../utils/analytics'
 import { getKeysForProject, getKeysStore } from './keys-store'
+import { resolveLayerConstructor } from './layer-constructor-resolver'
 import newProjectJSON from './new.json'
 import { LegendWidget, type LegendWidgetProps } from './widgets/legend-widget'
 
@@ -1530,14 +1531,19 @@ export function getNoodles(): Visualization {
                   .filter((e): e is LayerExtension => e !== null)
               }
 
-              // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl layer types dynamically
-              return new deck[type]({
+              const LayerClass = resolveLayerConstructor(type)
+              if (!LayerClass) {
+                debugApp(`Unknown layer type: ${type}`)
+                return null
+              }
+
+              return new LayerClass({
                 ...layer,
                 ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
                 // Prevent deck.gl layer errors from crashing the GPU process
                 onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
               })
-            }) || []
+            }).filter(layer => layer !== null) || []
 
           // Add overlay layer for selected GeoJSON features
           if (selectedGeoJsonFeatures.length > 0) {
