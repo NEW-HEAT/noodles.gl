@@ -2471,6 +2471,42 @@ describe('Tile3DLayerOp', () => {
     expect(view.props.farZMultiplier).toBe(64)
   })
 
+  it('exposes explicit GlobeView camera constraints', () => {
+    const op = new GlobeViewOp('/globe-view')
+    const maxLatitude = [
+      { zoom: -1, maxLatitude: 45 },
+      { zoom: 5, maxLatitude: 85.051129 },
+    ]
+    const lowZoomOrientationReset = {
+      zoomThreshold: 2,
+      zoomRange: 2,
+      bearing: true,
+      pitch: true,
+      maxBearing: 30,
+      maxPitch: 22,
+      hardMaxBearing: 75,
+      hardMaxPitch: 50,
+      friction: 0.18,
+      resetDuration: 90,
+    }
+    const { view } = op.execute({
+      maxLatitude,
+      maxLatitudeZoomClamp: true,
+      minGlobeZoom: 1.25,
+      lowZoomOrientationReset,
+      viewState: {
+        longitude: -81.3,
+        latitude: 28.9,
+        zoom: 16,
+      },
+    })
+
+    expect(view.props.maxLatitude).toEqual(maxLatitude)
+    expect(view.props.maxLatitudeZoomClamp).toBe(true)
+    expect(view.props.minGlobeZoom).toBe(1.25)
+    expect(view.props.lowZoomOrientationReset).toEqual(lowZoomOrientationReset)
+  })
+
   it('hides tilesetUrl by default', () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     expect(op.isFieldVisible('tilesetUrl')).toBe(false)

@@ -56,6 +56,7 @@ import type {
   SolidPolygonLayerProps,
   TextLayerProps,
 } from '@deck.gl/layers'
+import type { EditableGeoJsonLayerProps } from '@deck.gl-community/editable-layers'
 import type { ScenegraphLayerProps, SimpleMeshLayerProps } from '@deck.gl/mesh-layers'
 import type { Tileset3D } from '@loaders.gl/tiles'
 import { brightnessContrast, hueSaturation, vibrance } from '@luma.gl/effects'
@@ -3707,6 +3708,22 @@ export class GlobeViewOp extends Operator<GlobeViewOp> {
       ...createBaseViewFields(),
       ...createGeoViewFields(),
       controller: new BooleanField(false),
+      minGlobeZoom: new NumberField(0, {
+        min: -24,
+        max: 24,
+        step: 0.1,
+        optional: true,
+        showByDefault: false,
+      }),
+      maxLatitude: new UnknownField(undefined, { optional: true, showByDefault: false }),
+      maxLatitudeZoomClamp: new BooleanField(true, {
+        optional: true,
+        showByDefault: false,
+      }),
+      lowZoomOrientationReset: new UnknownField(undefined, {
+        optional: true,
+        showByDefault: false,
+      }),
       viewState: new CompoundPropsField({
         ...createGeoViewStateFields(),
         zoom: new NumberField(12, { min: 0, max: 24, step: 0.1 }),
@@ -5012,6 +5029,120 @@ export class GeoJsonLayerOp extends Operator<GeoJsonLayerOp> {
   }
 }
 
+export class EditableGeoJsonLayerOp extends Operator<EditableGeoJsonLayerOp> {
+  static displayName = 'EditableGeoJsonLayer'
+  static description = 'Render and edit GeoJSON features'
+  static cacheable = false
+
+  createInputs() {
+    return {
+      data: new GeoJsonField(),
+      visible: new BooleanField(true),
+      opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
+      mode: new StringLiteralField('view', {
+        values: [
+          'view',
+          'modify',
+          'translate',
+          'transform',
+          'scale',
+          'rotate',
+          'duplicate',
+          'delete',
+          'drawPoint',
+          'drawLineString',
+          'drawPolygon',
+          'drawPolygonByDragging',
+          'drawCircleFromCenter',
+          'drawCircleByBoundingBox',
+          'drawRectangle',
+          'drawSquare',
+          'drawRectangleFromCenter',
+          'drawSquareFromCenter',
+          'drawRectangleUsing3Points',
+        ],
+      }),
+      modeConfig: new UnknownField({}, { optional: true, showByDefault: false }),
+      selectedFeatureIndexes: new UnknownField([], { optional: true }),
+      pickable: new BooleanField(true),
+      filled: new BooleanField(true),
+      stroked: new BooleanField(false),
+      getFillColor: new ColorField('#000000', { accessor: true, transform: hexToColor }),
+      getLineColor: new ColorField('#000000', { accessor: true, transform: hexToColor }),
+      getLineWidth: new NumberField(1, { min: 0, accessor: true }),
+      lineWidthUnits: new StringLiteralField('meters', {
+        values: ['meters', 'common', 'pixels'],
+        showByDefault: false,
+      }),
+      lineWidthMinPixels: new NumberField(0, { min: 0, showByDefault: false }),
+      lineCapRounded: new BooleanField(false, { showByDefault: false }),
+      lineJointRounded: new BooleanField(false, { showByDefault: false }),
+      getTentativeFillColor: new ColorField('#000000', {
+        accessor: true,
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      getTentativeLineColor: new ColorField('#000000', {
+        accessor: true,
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      getTentativeLineWidth: new NumberField(1, {
+        min: 0,
+        accessor: true,
+        showByDefault: false,
+      }),
+      editHandlePointRadiusMinPixels: new NumberField(0, {
+        min: 0,
+        showByDefault: false,
+      }),
+      editHandlePointRadiusMaxPixels: new NumberField(Number.MAX_SAFE_INTEGER, {
+        min: 0,
+        showByDefault: false,
+      }),
+      getEditHandlePointColor: new ColorField('#000000', {
+        accessor: true,
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      getEditHandlePointOutlineColor: new ColorField('#ffffff', {
+        accessor: true,
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      getEditHandlePointRadius: new NumberField(1, {
+        min: 0,
+        accessor: true,
+        showByDefault: false,
+      }),
+      onEdit: new FunctionField(null, { optional: true, showByDefault: false }),
+      parameters: new CompoundPropsField(
+        {
+          depthTest: new BooleanField(true),
+        },
+        { showByDefault: false }
+      ),
+      extensions: new ListField(new ExtensionField(), { showByDefault: false }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      layer: new LayerField<EditableGeoJsonLayerProps>(),
+    }
+  }
+
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const layer = {
+      ...parseLayerProps<EditableGeoJsonLayerProps>(props),
+      type: 'EditableGeoJsonLayer' as const,
+      id: this.id,
+      updateTriggers: gatherTriggers(this.inputs, props),
+    }
+    return { layer }
+  }
+}
+
 export class ArcLayerOp extends Operator<ArcLayerOp> {
   static displayName = 'ArcLayer'
   static description = 'Render a set of arcs on the map'
@@ -5523,6 +5654,10 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
       maxRequests: new NumberField(6, { min: 0, softMax: 512, showByDefault: false }),
       refinementStrategy: new StringLiteralField('best-available', {
         values: ['best-available', 'no-overlap', 'never'],
+        showByDefault: false,
+      }),
+      lodStrategy: new StringLiteralField('none', {
+        values: ['none', 'coverage'],
         showByDefault: false,
       }),
       parameters: new CompoundPropsField(
@@ -6698,10 +6833,20 @@ export class MVTLayerOp extends Operator<MVTLayerOp> {
   createInputs() {
     return {
       data: new StringField('https://example.com/tiles/{z}/{x}/{y}.mvt'),
+      loadOptions: new UnknownField(null, { optional: true, showByDefault: false }),
       visible: new BooleanField(true),
       opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
       minZoom: new NumberField(0, { min: 0, max: 24 }),
       maxZoom: new NumberField(24, { min: 0, max: 24 }),
+      maxRequests: new NumberField(6, { min: 0, softMax: 512, showByDefault: false }),
+      refinementStrategy: new StringLiteralField('best-available', {
+        values: ['best-available', 'no-overlap', 'never'],
+        showByDefault: false,
+      }),
+      lodStrategy: new StringLiteralField('none', {
+        values: ['none', 'coverage'],
+        showByDefault: false,
+      }),
       filled: new BooleanField(true),
       stroked: new BooleanField(false),
       lineWidthMinPixels: new NumberField(1, { min: 0, showByDefault: false }),
@@ -6831,6 +6976,10 @@ export class TileLayerOp extends Operator<TileLayerOp> {
       maxCacheByteSize: new NumberField(Infinity, { optional: true, showByDefault: false }),
       refinementStrategy: new StringLiteralField('best-available', {
         values: ['best-available', 'no-overlap', 'never'],
+        showByDefault: false,
+      }),
+      lodStrategy: new StringLiteralField('none', {
+        values: ['none', 'coverage'],
         showByDefault: false,
       }),
       zRange: new UnknownField([0, 24], { optional: true, showByDefault: false }),
@@ -7475,6 +7624,7 @@ export const opTypes = {
   GeohashLayerOp,
   GeoJsonOp,
   GeoJsonLayerOp,
+  EditableGeoJsonLayerOp,
   GeoJsonTransformOp,
   GlobeViewOp,
   GraphInputOp,
