@@ -6925,6 +6925,7 @@ export class MVTLayerOp extends Operator<MVTLayerOp> {
       textBillboard: new BooleanField(true, { showByDefault: false }),
       textFontFamily: new StringField('Monaco, monospace', { showByDefault: false }),
       textFontWeight: new NumberField(400, { min: 100, max: 900, step: 100, showByDefault: false }),
+      textFontSettings: new UnknownField({}, { showByDefault: false }),
       textBackground: new BooleanField(false, { showByDefault: false }),
       textBackgroundPadding: new UnknownField([0, 0, 0, 0], { showByDefault: false }),
       textOutlineColor: new ColorField('#000000', {
@@ -7125,6 +7126,7 @@ export class CollisionFilterExtensionOp extends Operator<CollisionFilterExtensio
     return {
       collisionEnabled: new BooleanField(true),
       collisionGroup: new StringField('default'),
+      collisionTestProps: new UnknownField({}, { showByDefault: false }),
       getCollisionPriority: new NumberField(0, { accessor: true }),
     }
   }
