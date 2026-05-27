@@ -256,7 +256,7 @@ export const useRenderer = ({
 
         await addRecorderFrame(mapRecorder, mapContainer)
       }
-      finishEncoding()
+      await finishEncoding()
       setIsRendering(false)
     },
     [projectName, sequenceLength, fps, bitrate, bitrateMode, canvasFrameReady, redraw, setPosition]
