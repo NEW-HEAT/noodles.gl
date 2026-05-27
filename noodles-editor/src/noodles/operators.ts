@@ -6856,11 +6856,57 @@ export class MVTLayerOp extends Operator<MVTLayerOp> {
       getFillColor: new ColorField('#000000', { accessor: true, transform: hexToColor }),
       getLineColor: new ColorField('#000000', { accessor: true, transform: hexToColor }),
       getLineWidth: new NumberField(1, { min: 0, accessor: true }),
+      pointType: new StringLiteralField('circle', {
+        values: ['circle', 'icon', 'text', 'circle+text', 'icon+text', 'circle+icon'],
+        showByDefault: false,
+      }),
       getPointRadius: new NumberField(1, { accessor: true }),
       pointRadiusUnits: new StringLiteralField('pixels', {
         values: ['pixels', 'meters'],
         showByDefault: false,
       }),
+      getText: new StringField('', { accessor: true, showByDefault: false }),
+      getTextSize: new NumberField(32, {
+        min: 0,
+        softMax: 200,
+        accessor: true,
+        showByDefault: false,
+      }),
+      getTextColor: new ColorField('#000000', {
+        accessor: true,
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      getTextAngle: new NumberField(0, {
+        softMin: 0,
+        softMax: 360,
+        accessor: true,
+        showByDefault: false,
+      }),
+      getTextAnchor: new StringLiteralField('middle', {
+        values: ['start', 'middle', 'end'],
+        accessor: true,
+        showByDefault: false,
+      }),
+      getTextAlignmentBaseline: new StringLiteralField('center', {
+        values: ['top', 'center', 'bottom'],
+        accessor: true,
+        showByDefault: false,
+      }),
+      getTextPixelOffset: new Vec2Field(
+        { x: 0, y: 0 },
+        { returnType: 'tuple', accessor: true, showByDefault: false }
+      ),
+      textSizeUnits: new StringLiteralField('pixels', {
+        values: ['pixels', 'meters'],
+        showByDefault: false,
+      }),
+      textSizeScale: new NumberField(1, { min: 0, softMax: 100, showByDefault: false }),
+      textSizeMinPixels: new NumberField(0, { min: 0, softMax: 100, showByDefault: false }),
+      textSizeMaxPixels: new NumberField(100, { min: 0, showByDefault: false }),
+      textBillboard: new BooleanField(true, { showByDefault: false }),
+      textFontFamily: new StringField('Monaco, monospace', { showByDefault: false }),
+      textFontWeight: new NumberField(400, { min: 100, max: 900, step: 100, showByDefault: false }),
       autoLabels: new BooleanField(false, { optional: true }),
       parameters: new CompoundPropsField(
         {
