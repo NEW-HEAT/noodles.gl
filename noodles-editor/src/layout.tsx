@@ -32,7 +32,7 @@ export function Layout({
   const setSidebarVisible = useUIStore(state => state.setSidebarVisible)
 
   return (
-    <div className={cx(s.layout, layoutClass)}>
+    <div className={cx(s.layout, layoutClass)} data-noodles-root="">
       <div style={{ gridArea: 'top-bar' }}>{top}</div>
       {sidebarVisible && (
         <div className={s.sidebarContainer} style={{ gridArea: 'left-widget', minHeight: 0 }}>

@@ -13,7 +13,7 @@
  * even when vendor libraries update their styles or specificity.
  */
 
-:root {
+:global(:where([data-noodles-root], .react-flow-wrapper)) {
   color-scheme: dark;
 
   /* Generic UI colors - used throughout the interface */
@@ -70,7 +70,7 @@
   --timeline-accent: #48c6cf;
 }
 
-:root {
+:global(:where([data-noodles-root], .react-flow-wrapper)) {
   --z-index-background: -99;
   --z-index-node-tooltip: 101;
   --z-index-canvas: 999;

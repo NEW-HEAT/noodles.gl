@@ -52,10 +52,8 @@
    ======================================================================== */
 
 @layer reset {
-  /* Remove default browser styling from form elements */
-  fieldset,
-  button,
-  input {
+  /* Remove default browser styling from form elements inside Noodles only. */
+  :where([data-noodles-root], .react-flow-wrapper) :where(fieldset, button, input) {
     all: unset;
   }
 }
@@ -65,8 +63,7 @@
    ======================================================================== */
 
 @layer base {
-  body {
-    margin: 0;
+  :where([data-noodles-root], .react-flow-wrapper) {
     font-family:
       -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell",
       "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
@@ -74,16 +71,11 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  code {
+  :where([data-noodles-root], .react-flow-wrapper) code {
     font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
   }
 
-  #root {
-    height: 100vh;
-    overflow-y: hidden;
-  }
-
-  #deckgl-wrapper {
+  :where([data-noodles-root], .react-flow-wrapper) #deckgl-wrapper {
     height: 100vh;
   }
 }
