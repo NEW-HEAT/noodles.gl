@@ -20,6 +20,23 @@ import {
   useReactFlow,
   useStoreApi,
 } from '@xyflow/react'
+import {
+  DrawCircleByDiameterMode,
+  DrawCircleFromCenterMode,
+  DrawLineStringMode,
+  DrawPointMode,
+  DrawPolygonMode,
+  DrawPolygonByDraggingMode,
+  DrawRectangleFromCenterMode,
+  DrawRectangleMode,
+  DrawRectangleUsingThreePointsMode,
+  DrawSquareFromCenterMode,
+  DrawSquareMode,
+  EditableGeoJsonLayer,
+  ModifyMode,
+  ViewMode,
+} from '@deck.gl-community/editable-layers'
+import { SkyboxLayer } from '@deck.gl-community/layers'
 import cx from 'classnames'
 import type { LayerExtension } from 'deck.gl'
 import * as deck from 'deck.gl'
@@ -151,10 +168,63 @@ const defaultEdgeOptions: DefaultEdgeOptions = {
   animated: false,
 }
 
-const tileLayerTypes = new Set(['MVTLayer', 'TileLayer', 'RasterTileLayer'])
+function shouldSkipLayerInstantiation(_type: string, layer: Record<string, unknown>) {
+  return layer.visible === false
+}
 
-function shouldSkipLayerInstantiation(type: string, layer: Record<string, unknown>) {
-  return layer.visible === false && tileLayerTypes.has(type) && (layer.data == null || layer.data === '')
+type LayerConstructor = new (props: Record<string, unknown>) => unknown
+type WidgetConstructor = new (props: Record<string, unknown>) => unknown
+
+const additionalLayerConstructors: Record<string, LayerConstructor> = {
+  EditableGeoJsonLayer: EditableGeoJsonLayer as unknown as LayerConstructor,
+  SkyboxLayer: SkyboxLayer as unknown as LayerConstructor,
+}
+
+const editableGeoJsonModeConstructors: Record<string, unknown> = {
+  view: ViewMode,
+  modify: ModifyMode,
+  drawPoint: DrawPointMode,
+  drawLineString: DrawLineStringMode,
+  drawPolygon: DrawPolygonMode,
+  drawPolygonByDragging: DrawPolygonByDraggingMode,
+  drawCircleFromCenter: DrawCircleFromCenterMode,
+  drawCircleByBoundingBox: DrawCircleByDiameterMode,
+  drawRectangle: DrawRectangleMode,
+  drawSquare: DrawSquareMode,
+  drawRectangleFromCenter: DrawRectangleFromCenterMode,
+  drawSquareFromCenter: DrawSquareFromCenterMode,
+  drawRectangleUsing3Points: DrawRectangleUsingThreePointsMode,
+}
+
+function getLayerConstructor(type: string): LayerConstructor | null {
+  const deckLayers = deck as unknown as Record<string, unknown>
+  const candidate = deckLayers[type] ?? additionalLayerConstructors[type]
+  return typeof candidate === 'function' ? (candidate as LayerConstructor) : null
+}
+
+function normalizeLayerConfig(type: string, layerConfig: Record<string, unknown>) {
+  if (type === 'EditableGeoJsonLayer' && typeof layerConfig.mode === 'string') {
+    layerConfig.mode = editableGeoJsonModeConstructors[layerConfig.mode] ?? ViewMode
+  }
+}
+
+function getWidgetConstructor(type: string): WidgetConstructor | null {
+  const widgets = deckWidgets as Record<string, unknown>
+  const unprefixed = type.replace(/^_/, '')
+  const candidate = widgets[type] ?? widgets[unprefixed]
+  return typeof candidate === 'function' ? (candidate as WidgetConstructor) : null
+}
+
+function flattenWidgetProps(widgets: unknown[]): unknown[] {
+  const flattened: unknown[] = []
+  for (const widget of widgets) {
+    if (Array.isArray(widget)) {
+      flattened.push(...flattenWidgetProps(widget))
+    } else if (widget != null) {
+      flattened.push(widget)
+    }
+  }
+  return flattened
 }
 
 // Syncs edge data from React Flow store to centralized EdgeConnectionStore for O(1) lookups
@@ -1596,9 +1666,17 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
                   .filter((e): e is LayerExtension => e !== null)
               }
 
-              // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl layer types dynamically
-              return new deck[type]({
-                ...layer,
+              const LayerClass = getLayerConstructor(type)
+              if (!LayerClass) {
+                debugApp(`Unknown layer type: ${type}`)
+                return []
+              }
+
+              const layerConfig = { ...layer }
+              normalizeLayerConfig(type, layerConfig)
+
+              return new LayerClass({
+                ...layerConfig,
                 ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
                 // Prevent deck.gl layer errors from crashing the GPU process
                 onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
@@ -1633,12 +1711,29 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
             deckProps: {
               ...deckProps,
               layers: instantiatedLayers,
-              widgets: widgets?.map(({ type, ...widget }) => {
-                if (type === 'LegendWidget')
-                  return new LegendWidget(widget as unknown as LegendWidgetProps)
-                // biome-ignore lint/performance/noDynamicNamespaceImportAccess: We intentionally support all deck.gl widget types dynamically
-                return new deckWidgets[type](widget)
-              }),
+              widgets: widgets
+                ? flattenWidgetProps(widgets).map(widgetProps => {
+                  if (!widgetProps || typeof widgetProps !== 'object') return widgetProps
+
+                  const { type, ...widget } = widgetProps as {
+                    type?: unknown
+                    [key: string]: unknown
+                  }
+                  if (typeof type !== 'string') return widgetProps
+
+                  if (type === 'LegendWidget') {
+                    return new LegendWidget(widget as unknown as LegendWidgetProps)
+                  }
+
+                  const WidgetClass = getWidgetConstructor(type)
+                  if (!WidgetClass) {
+                    debugApp(`Unknown widget type: ${type}`)
+                    return null
+                  }
+                  return new WidgetClass(widget)
+                })
+                  .filter(Boolean)
+                : [],
             },
             mapProps,
           })
