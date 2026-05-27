@@ -1443,6 +1443,7 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
       {/* biome-ignore lint/a11y/noStaticElementInteractions: canvas wrapper needs mouse tracking */}
       <div
         className={cx('react-flow-wrapper', !showOverlay && 'react-flow-wrapper-hidden')}
+        data-noodles-root=""
         onMouseMove={onMouseMove}
       >
         <PrimeReactProvider>
