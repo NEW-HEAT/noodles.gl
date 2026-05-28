@@ -5644,6 +5644,21 @@ class TerrainExtensionOp extends Operator<TerrainExtensionOp> {
   }
 }
 
+type RasterTileLayerRenderProps = TileLayerProps & {
+  id: string
+  data: unknown
+  _offset: number
+  tile: { boundingBox: [[number, number], [number, number]] }
+}
+
+type RasterTileLayerPlaceholderProps = Omit<RasterTileLayerRenderProps, 'data'> & {
+  data: unknown | null
+}
+
+type RasterTileLayerProps = TileLayerProps & {
+  renderPlaceholderSubLayers?: ((props: RasterTileLayerPlaceholderProps) => unknown) | null
+}
+
 class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
   static displayName = 'RasterTileLayer'
   static description = 'Render a raster tile layer on the map'
@@ -5667,6 +5682,21 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
         values: ['none', 'coverage'],
         showByDefault: false,
       }),
+      placeholderWireframe: new BooleanField(false, { showByDefault: false }),
+      placeholderFillColor: new ColorField('#09111acc', {
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      placeholderLineColor: new ColorField('#d7e7ff66', {
+        transform: hexToColor,
+        showByDefault: false,
+      }),
+      placeholderLineWidth: new NumberField(1, {
+        min: 0,
+        softMax: 4,
+        step: 0.25,
+        showByDefault: false,
+      }),
       parameters: new CompoundPropsField(
         {
           depthTest: new BooleanField(true),
@@ -5682,15 +5712,28 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
       layer: new LayerField<RasterTileLayerProps>(),
     }
   }
-  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+  execute({
+    placeholderWireframe,
+    placeholderFillColor,
+    placeholderLineColor,
+    placeholderLineWidth,
+    ...props
+  }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const allProps = {
+      placeholderWireframe,
+      placeholderFillColor,
+      placeholderLineColor,
+      placeholderLineWidth,
+      ...props,
+    }
     const layer = {
       ...parseLayerProps<RasterTileLayerProps>(props),
       type: 'TileLayer' as const,
       id: this.id,
-      updateTriggers: gatherTriggers(this.inputs, props),
-      renderSubLayers: props => {
-        const [[west, south], [east, north]] = props.tile.boundingBox
-        const { data, ...otherProps } = props
+      updateTriggers: gatherTriggers(this.inputs, allProps),
+      renderSubLayers: (subLayerProps: RasterTileLayerRenderProps) => {
+        const [[west, south], [east, north]] = subLayerProps.tile.boundingBox
+        const { data, ...otherProps } = subLayerProps
 
         return [
           new deck.BitmapLayer(otherProps, {
@@ -5700,6 +5743,46 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
           }),
         ]
       },
+      renderPlaceholderSubLayers: placeholderWireframe
+        ? (subLayerProps: RasterTileLayerPlaceholderProps) => {
+            const [[west, south], [east, north]] = subLayerProps.tile.boundingBox
+            const { data: _data, ...otherProps } = subLayerProps
+
+            return [
+              new deck.PolygonLayer(otherProps, {
+                data: [
+                  {
+                    polygon: [
+                      [west, south],
+                      [west, north],
+                      [east, north],
+                      [east, south],
+                      [west, south],
+                    ],
+                  },
+                ],
+                filled: true,
+                stroked: true,
+                getPolygon: (d: { polygon: number[][] }) => d.polygon,
+                getFillColor: placeholderFillColor,
+                getLineColor: placeholderLineColor,
+                getLineWidth: placeholderLineWidth,
+                lineWidthUnits: 'pixels',
+                lineWidthMinPixels: placeholderLineWidth,
+                pickable: false,
+                autoHighlight: false,
+                parameters: {
+                  ...(typeof otherProps.parameters === 'object' && otherProps.parameters
+                    ? otherProps.parameters
+                    : {}),
+                  depthTest: true,
+                  depthWriteEnabled: true,
+                  depthCompare: 'less-equal',
+                },
+              }),
+            ]
+          }
+        : null,
     }
     return { layer }
   }
