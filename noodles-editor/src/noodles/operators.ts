@@ -3708,6 +3708,13 @@ export class GlobeViewOp extends Operator<GlobeViewOp> {
       ...createBaseViewFields(),
       ...createGeoViewFields(),
       controller: new BooleanField(false),
+      webMercatorFallbackZoom: new NumberField(12, {
+        min: 0,
+        max: 24,
+        step: 0.1,
+        optional: true,
+        showByDefault: false,
+      }),
       minGlobeZoom: new NumberField(0, {
         min: -24,
         max: 24,

@@ -11,6 +11,57 @@ function useSequenceLength() {
   return useTimelineStore(state => state.sequence.length)
 }
 
+type SaveFilePicker = (options: {
+  suggestedName?: string
+  types?: {
+    description?: string
+    accept: Record<string, string[]>
+  }[]
+}) => Promise<FileSystemFileHandle>
+
+const saveMp4Blob = async (filename: string, blob: Blob) => {
+  const shareFile = new File([blob], filename, { type: 'video/mp4' })
+  const mobileShare = navigator as unknown as {
+    canShare?: (data: ShareData) => boolean
+    share?: (data: ShareData) => Promise<void>
+  }
+  const share = mobileShare.share?.bind(navigator)
+  const canShareFile = (() => {
+    try {
+      return Boolean(share && mobileShare.canShare?.({ files: [shareFile] }))
+    } catch {
+      return false
+    }
+  })()
+
+  if (share && canShareFile) {
+    try {
+      await share({
+        files: [shareFile],
+        title: filename,
+      })
+      return
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        debugRender('MP4 share cancelled by user for: %s', filename)
+        return
+      }
+      debugRender('Error sharing MP4 for', filename, ':', error)
+    }
+  }
+
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.rel = 'noopener'
+  link.style.display = 'none'
+  document.body.append(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
 export const useRenderer = ({
   projectName = 'render',
   fps = 30,
@@ -66,46 +117,59 @@ export const useRenderer = ({
       setIsRendering(true)
 
       const getContainer = async (name: string) => {
-        const fileHandle = await window
-          .showSaveFilePicker({
-            suggestedName: `${name}.mp4`,
-            types: [
-              {
-                description: 'Video File',
-                accept: { 'video/mp4': ['.mp4'] },
-              },
-            ],
-          })
-          .catch(error => {
-            if (error.name === 'AbortError') {
-              debugRender('File picker cancelled by user for: %s', name)
-            } else {
+        const filename = `${name}.mp4`
+        const showSaveFilePicker = (
+          window as Window & { showSaveFilePicker?: SaveFilePicker }
+        ).showSaveFilePicker?.bind(window)
+        const fileHandle = showSaveFilePicker
+          ? await showSaveFilePicker({
+              suggestedName: filename,
+              types: [
+                {
+                  description: 'Video File',
+                  accept: { 'video/mp4': ['.mp4'] },
+                },
+              ],
+            }).catch((error) => {
+              if (error.name === 'AbortError') {
+                debugRender('File picker cancelled by user for: %s', name)
+                return null
+              }
               debugRender('Error in showSaveFilePicker for', name, ':', error)
-            }
-            return null // Signal cancellation/failure
-          })
+              return undefined
+            })
+          : undefined
 
-        if (!fileHandle) {
+        if (fileHandle === null) {
           return null
         }
 
-        const { EncodedPacket, EncodedVideoPacketSource, Mp4OutputFormat, Output, StreamTarget } =
-          await import('mediabunny')
+        const {
+          BufferTarget,
+          EncodedPacket,
+          EncodedVideoPacketSource,
+          Mp4OutputFormat,
+          Output,
+          StreamTarget,
+        } = await import('mediabunny')
 
-        const fileWritableStream = await fileHandle.createWritable()
+        let bufferTarget: InstanceType<typeof BufferTarget> | null = null
+        const target = fileHandle
+          ? new StreamTarget(
+              (await fileHandle.createWritable()) as WritableStream<{
+                type: 'write'
+                data: Uint8Array
+                position: number
+              }>,
+              { chunked: true }
+            )
+          : (bufferTarget = new BufferTarget())
 
         const output = new Output({
           format: new Mp4OutputFormat({
             fastStart: 'in-memory',
           }),
-          target: new StreamTarget(
-            fileWritableStream as WritableStream<{
-              type: 'write'
-              data: Uint8Array
-              position: number
-            }>,
-            { chunked: true }
-          ),
+          target,
         })
 
         const videoSource = new EncodedVideoPacketSource(codec)
@@ -174,6 +238,12 @@ export const useRenderer = ({
           await videoEncoder.flush()
           videoSource.close()
           await output.finalize()
+          if (bufferTarget?.buffer) {
+            await saveMp4Blob(
+              filename,
+              new Blob([bufferTarget.buffer], { type: 'video/mp4' })
+            )
+          }
         }
 
         return {
@@ -192,72 +262,73 @@ export const useRenderer = ({
         return { track, reader }
       }
 
-      const mapContainer = await getContainer(`${projectName}-map`)
-      if (!mapContainer) {
-        setIsRendering(false)
-        debugRender('Render setup cancelled by user (map container)')
-        return
-      }
-      const containers = new Map([['map', mapContainer]])
-
-      const mapRecorder = getCanvasRecorder(canvas)
-
-      async function finishEncoding() {
-        for (const container of containers.values()) {
-          await container.finishEncoding()
+      try {
+        const mapContainer = await getContainer(`${projectName}-map`)
+        if (!mapContainer) {
+          debugRender('Render setup cancelled by user (map container)')
+          return
         }
-        mapRecorder?.reader?.releaseLock()
-      }
+        const containers = new Map([['map', mapContainer]])
 
-      // Seek to start frame and wait for render to complete before capturing.
-      // This prevents stale frames from being encoded if the playhead was
-      // at a different position when render started.
-      const warmupSimTime = startFrame / fps
-      setPosition(warmupSimTime)
-      redraw()
+        const mapRecorder = getCanvasRecorder(canvas)
 
-      const warmupResult = await canvasFrameReady()
-      if (warmupResult?.error) {
-        debugRender('Error during render warmup:', warmupResult.error)
-        setIsRendering(false)
-        return
-      }
+        async function finishEncoding() {
+          for (const container of containers.values()) {
+            await container.finishEncoding()
+          }
+          mapRecorder?.reader?.releaseLock()
+        }
 
-      for (; i < endFrame + 1; i++) {
-        const simTime = i / fps
-        setPosition(simTime)
+        // Seek to start frame and wait for render to complete before capturing.
+        // This prevents stale frames from being encoded if the playhead was
+        // at a different position when render started.
+        const warmupSimTime = startFrame / fps
+        setPosition(warmupSimTime)
         redraw()
 
-        currentFrame.current = i
-        if (i % 10 === 0)
-          debugRenderFrame('capturing frame %d/%d at simtime %d', i, endFrame, simTime)
-
-        const canvasResult = await canvasFrameReady()
-
-        if (canvasResult?.error) {
-          debugRender('Error capturing canvas frame:', canvasResult.error)
+        const warmupResult = await canvasFrameReady()
+        if (warmupResult?.error) {
+          debugRender('Error during render warmup:', warmupResult.error)
           return
         }
 
-        const addRecorderFrame = async (
-          recorder: ReturnType<typeof getCanvasRecorder>,
-          container: Awaited<ReturnType<typeof getContainer>>
-        ) => {
-          // @ts-expect-error - typescript types not updated yet
-          recorder.track.requestFrame()
-          const result = await recorder.reader.read()
-          const frame = result.value
+        for (; i < endFrame + 1; i++) {
+          const simTime = i / fps
+          setPosition(simTime)
+          redraw()
 
-          assert(frame, 'frame is required - might be a problem with the browser')
+          currentFrame.current = i
+          if (i % 10 === 0)
+            debugRenderFrame('capturing frame %d/%d at simtime %d', i, endFrame, simTime)
 
-          await container?.encodeFrame(frame)
-          frame.close()
+          const canvasResult = await canvasFrameReady()
+
+          if (canvasResult?.error) {
+            debugRender('Error capturing canvas frame:', canvasResult.error)
+            return
+          }
+
+          const addRecorderFrame = async (
+            recorder: ReturnType<typeof getCanvasRecorder>,
+            container: Awaited<ReturnType<typeof getContainer>>
+          ) => {
+            // @ts-expect-error - typescript types not updated yet
+            recorder.track.requestFrame()
+            const result = await recorder.reader.read()
+            const frame = result.value
+
+            assert(frame, 'frame is required - might be a problem with the browser')
+
+            await container?.encodeFrame(frame)
+            frame.close()
+          }
+
+          await addRecorderFrame(mapRecorder, mapContainer)
         }
-
-        await addRecorderFrame(mapRecorder, mapContainer)
+        await finishEncoding()
+      } finally {
+        setIsRendering(false)
       }
-      await finishEncoding()
-      setIsRendering(false)
     },
     [projectName, sequenceLength, fps, bitrate, bitrateMode, canvasFrameReady, redraw, setPosition]
   )
@@ -405,7 +476,14 @@ export const captureScreenshot = async (
   getBufferedCanvas: () => HTMLCanvasElement,
   quality = 1
 ) => {
-  const imageHandle = await window.showSaveFilePicker({
+  const showSaveFilePicker = (
+    window as Window & { showSaveFilePicker?: SaveFilePicker }
+  ).showSaveFilePicker?.bind(window)
+  if (!showSaveFilePicker) {
+    throw new Error('File picker not supported')
+  }
+
+  const imageHandle = await showSaveFilePicker({
     suggestedName,
     types: [
       {
