@@ -5674,6 +5674,7 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
       maxZoom: new NumberField(24, { min: 0, max: 24 }),
       tileSize: new NumberField(256, { min: 1, softMax: 1024 }),
       maxRequests: new NumberField(6, { min: 0, softMax: 512, showByDefault: false }),
+      maxCacheSize: new NumberField(512, { min: 0, softMax: 4096, showByDefault: false }),
       refinementStrategy: new StringLiteralField('best-available', {
         values: ['best-available', 'no-overlap', 'never'],
         showByDefault: false,
@@ -5747,6 +5748,10 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
         ? (subLayerProps: RasterTileLayerPlaceholderProps) => {
             const [[west, south], [east, north]] = subLayerProps.tile.boundingBox
             const { data: _data, ...otherProps } = subLayerProps
+            const layerParameters =
+              typeof otherProps.parameters === 'object' && otherProps.parameters
+                ? (otherProps.parameters as Record<string, unknown>)
+                : {}
 
             return [
               new deck.PolygonLayer(otherProps, {
@@ -5772,12 +5777,10 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
                 pickable: false,
                 autoHighlight: false,
                 parameters: {
-                  ...(typeof otherProps.parameters === 'object' && otherProps.parameters
-                    ? otherProps.parameters
-                    : {}),
-                  depthTest: true,
-                  depthWriteEnabled: true,
-                  depthCompare: 'less-equal',
+                  ...layerParameters,
+                  depthTest: layerParameters.depthTest ?? true,
+                  depthWriteEnabled: layerParameters.depthWriteEnabled ?? true,
+                  depthCompare: layerParameters.depthCompare ?? 'less-equal',
                 },
               }),
             ]

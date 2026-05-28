@@ -19,7 +19,69 @@ type SaveFilePicker = (options: {
   }[]
 }) => Promise<FileSystemFileHandle>
 
-const saveMp4Blob = async (filename: string, blob: Blob) => {
+type SaveMp4Blob = (filename: string, blob: Blob) => Promise<boolean | void> | boolean | void
+
+export type RenderCaptureResult =
+  | {
+      status: 'saved'
+      filename: string
+      width: number
+      height: number
+    }
+  | {
+      status: 'cancelled'
+    }
+
+function evenVideoDimension(value: number): number {
+  const integer = Math.floor(Number.isFinite(value) ? value : 0)
+  return Math.max(2, integer - (integer % 2))
+}
+
+function videoEncoderConfigError(codec: string, config: VideoEncoderConfig): Error {
+  return new Error(
+    `Unsupported ${codec.toUpperCase()} encoder configuration: ${config.width}x${config.height} ` +
+      `${config.framerate ?? 'unknown'}fps at ${Math.round((config.bitrate ?? 0) / 1_000_000)}Mbps.`
+  )
+}
+
+async function findSupportedVideoEncoderConfig(
+  codec: string,
+  config: VideoEncoderConfig
+): Promise<VideoEncoderConfig> {
+  const withoutBitrateMode: VideoEncoderConfig = { ...config }
+  delete withoutBitrateMode.bitrateMode
+
+  const candidates: VideoEncoderConfig[] = [
+    config,
+    { ...config, hardwareAcceleration: 'no-preference' },
+    { ...config, hardwareAcceleration: 'prefer-software' },
+    { ...config, bitrateMode: 'variable' },
+    { ...config, hardwareAcceleration: 'no-preference', bitrateMode: 'variable' },
+    { ...config, hardwareAcceleration: 'prefer-software', bitrateMode: 'variable' },
+    withoutBitrateMode,
+    { ...withoutBitrateMode, hardwareAcceleration: 'no-preference' },
+    { ...withoutBitrateMode, hardwareAcceleration: 'prefer-software' },
+  ]
+
+  for (const candidate of candidates) {
+    const result = await VideoEncoder.isConfigSupported(candidate)
+    if (result.supported) {
+      if (candidate !== config) {
+        debugRender('Using fallback encoder configuration', candidate)
+      }
+      return result.config ?? candidate
+    }
+  }
+
+  throw videoEncoderConfigError(codec, config)
+}
+
+const saveMp4Blob = async (filename: string, blob: Blob, saveBlob?: SaveMp4Blob) => {
+  if (saveBlob) {
+    const handled = await saveBlob(filename, blob)
+    if (handled !== false) return
+  }
+
   const shareFile = new File([blob], filename, { type: 'video/mp4' })
   const mobileShare = navigator as unknown as {
     canShare?: (data: ShareData) => boolean
@@ -68,12 +130,14 @@ export const useRenderer = ({
   bitrate = 10_000_000, // 10mbps
   bitrateMode,
   redraw,
+  saveBlob,
 }: {
   projectName?: string
   fps?: number
   bitrate?: number
   bitrateMode: 'variable' | 'constant'
   redraw: () => void
+  saveBlob?: SaveMp4Blob
 }) => {
   // Get sequence length from the appropriate timeline system
   const sequenceLength = useSequenceLength()
@@ -113,8 +177,12 @@ export const useRenderer = ({
       assert(canvas, 'canvas is required')
 
       let i = startFrame
+      const outputWidth = evenVideoDimension(width)
+      const outputHeight = evenVideoDimension(height)
 
       setIsRendering(true)
+
+      const outputFilename = `${projectName}-map.mp4`
 
       const getContainer = async (name: string) => {
         const filename = `${name}.mp4`
@@ -209,8 +277,8 @@ export const useRenderer = ({
         } as const
 
         const config = {
-          width,
-          height,
+          width: outputWidth,
+          height: outputHeight,
           bitrate,
           bitrateMode,
           hardwareAcceleration: 'prefer-hardware',
@@ -218,14 +286,8 @@ export const useRenderer = ({
           ...codecMap[codec],
         } as const
 
-        const { supported } = await VideoEncoder.isConfigSupported(config)
-
-        if (!supported) {
-          debugRender('Unsupported codec configuration', config)
-          debugger
-        }
-
-        videoEncoder.configure(config)
+        const supportedConfig = await findSupportedVideoEncoderConfig(codec, config)
+        videoEncoder.configure(supportedConfig)
 
         async function encodeFrame(data: VideoFrame) {
           const keyFrame = i % 60 === 0
@@ -241,7 +303,8 @@ export const useRenderer = ({
           if (bufferTarget?.buffer) {
             await saveMp4Blob(
               filename,
-              new Blob([bufferTarget.buffer], { type: 'video/mp4' })
+              new Blob([bufferTarget.buffer], { type: 'video/mp4' }),
+              saveBlob
             )
           }
         }
@@ -256,27 +319,47 @@ export const useRenderer = ({
       }
 
       function getCanvasRecorder(canvas: HTMLCanvasElement) {
-        const track = canvas.captureStream(0).getVideoTracks()[0]
+        const needsResize = canvas.width !== outputWidth || canvas.height !== outputHeight
+        const captureCanvas = needsResize ? document.createElement('canvas') : canvas
+        let captureContext: CanvasRenderingContext2D | null = null
+
+        if (needsResize) {
+          captureCanvas.width = outputWidth
+          captureCanvas.height = outputHeight
+          captureContext = captureCanvas.getContext('2d')
+          assert(captureContext, 'capture canvas context is required')
+          captureContext.imageSmoothingEnabled = true
+          captureContext.imageSmoothingQuality = 'high'
+        }
+
+        const prepareFrame = () => {
+          if (!captureContext) return
+          captureContext.drawImage(canvas, 0, 0, outputWidth, outputHeight)
+        }
+
+        prepareFrame()
+        const track = captureCanvas.captureStream(0).getVideoTracks()[0]
         const mediaProcessor = new MediaStreamTrackProcessor({ track })
         const reader = mediaProcessor.readable.getReader()
-        return { track, reader }
+        return { track, reader, prepareFrame }
       }
+
+      let mapRecorder: ReturnType<typeof getCanvasRecorder> | null = null
 
       try {
         const mapContainer = await getContainer(`${projectName}-map`)
         if (!mapContainer) {
           debugRender('Render setup cancelled by user (map container)')
-          return
+          return { status: 'cancelled' } satisfies RenderCaptureResult
         }
         const containers = new Map([['map', mapContainer]])
 
-        const mapRecorder = getCanvasRecorder(canvas)
+        mapRecorder = getCanvasRecorder(canvas)
 
         async function finishEncoding() {
           for (const container of containers.values()) {
             await container.finishEncoding()
           }
-          mapRecorder?.reader?.releaseLock()
         }
 
         // Seek to start frame and wait for render to complete before capturing.
@@ -289,7 +372,7 @@ export const useRenderer = ({
         const warmupResult = await canvasFrameReady()
         if (warmupResult?.error) {
           debugRender('Error during render warmup:', warmupResult.error)
-          return
+          throw warmupResult.error
         }
 
         for (; i < endFrame + 1; i++) {
@@ -305,13 +388,14 @@ export const useRenderer = ({
 
           if (canvasResult?.error) {
             debugRender('Error capturing canvas frame:', canvasResult.error)
-            return
+            throw canvasResult.error
           }
 
           const addRecorderFrame = async (
             recorder: ReturnType<typeof getCanvasRecorder>,
             container: Awaited<ReturnType<typeof getContainer>>
           ) => {
+            recorder.prepareFrame()
             // @ts-expect-error - typescript types not updated yet
             recorder.track.requestFrame()
             const result = await recorder.reader.read()
@@ -326,11 +410,19 @@ export const useRenderer = ({
           await addRecorderFrame(mapRecorder, mapContainer)
         }
         await finishEncoding()
+        return {
+          status: 'saved',
+          filename: outputFilename,
+          width: outputWidth,
+          height: outputHeight,
+        } satisfies RenderCaptureResult
       } finally {
+        mapRecorder?.reader?.releaseLock()
+        mapRecorder?.track?.stop()
         setIsRendering(false)
       }
     },
-    [projectName, sequenceLength, fps, bitrate, bitrateMode, canvasFrameReady, redraw, setPosition]
+    [projectName, sequenceLength, fps, bitrate, bitrateMode, canvasFrameReady, redraw, saveBlob, setPosition]
   )
 
   // Image sequence export — same frame loop as video capture, writes individual PNGs.

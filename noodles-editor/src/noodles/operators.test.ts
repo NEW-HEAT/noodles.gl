@@ -24,6 +24,7 @@ import {
   MergeOp,
   NumberOp,
   Operator,
+  opTypes,
   ProjectOp,
   RectangleOp,
   RerouteOp,
@@ -706,6 +707,33 @@ describe('ScatterplotLayerOp', () => {
     })
     expect(layer.updateTriggers).toEqual({ getPosition: ['test'] })
     expect(layer.otherProp).toEqual(1)
+  })
+})
+
+describe('RasterTileLayerOp', () => {
+  it('passes coverage LOD and cache props through to TileLayer output', () => {
+    const operator = new opTypes.RasterTileLayerOp('/satellite-basemap')
+    const { layer } = operator.execute({
+      visible: true,
+      opacity: 1,
+      data: 'https://tiles.example.com/{z}/{y}/{x}.png',
+      minZoom: 0,
+      maxZoom: 19,
+      tileSize: 256,
+      maxRequests: 12,
+      maxCacheSize: 512,
+      refinementStrategy: 'best-available',
+      lodStrategy: 'coverage',
+      placeholderWireframe: false,
+      extensions: [],
+    })
+
+    expect(layer.type).toEqual('TileLayer')
+    expect(layer.id).toEqual('/satellite-basemap')
+    expect(layer.lodStrategy).toEqual('coverage')
+    expect(layer.maxRequests).toEqual(12)
+    expect(layer.maxCacheSize).toEqual(512)
+    expect(layer.refinementStrategy).toEqual('best-available')
   })
 })
 
