@@ -735,6 +735,37 @@ describe('RasterTileLayerOp', () => {
     expect(layer.maxCacheSize).toEqual(512)
     expect(layer.refinementStrategy).toEqual('best-available')
   })
+
+  it('leaves bitmap image coordinates at default so TileLayer applies GlobeView fixes', () => {
+    const operator = new opTypes.RasterTileLayerOp('/satellite-basemap')
+    const { layer } = operator.execute({
+      visible: true,
+      opacity: 1,
+      data: 'https://tiles.example.com/{z}/{y}/{x}.png',
+      minZoom: 0,
+      maxZoom: 19,
+      tileSize: 256,
+      maxRequests: 12,
+      maxCacheSize: 512,
+      refinementStrategy: 'best-available',
+      lodStrategy: 'coverage',
+      placeholderWireframe: false,
+      extensions: [],
+    })
+
+    const [bitmapLayer] = layer.renderSubLayers({
+      id: '/satellite-basemap-0-0-0',
+      data: 'tile-image',
+      tile: {
+        boundingBox: [
+          [-180, -85.051129],
+          [180, 85.051129],
+        ],
+      },
+    })
+
+    expect(bitmapLayer.props._imageCoordinateSystem).toBe('default')
+  })
 })
 
 describe('DeckRendererOp', () => {
