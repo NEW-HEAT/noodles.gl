@@ -5670,6 +5670,8 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
       tileSize: new NumberField(256, { min: 1, softMax: 1024 }),
       maxRequests: new NumberField(6, { min: 0, softMax: 512, showByDefault: false }),
       maxCacheSize: new NumberField(512, { min: 0, softMax: 4096, showByDefault: false }),
+      zoomOffset: new NumberField(0, { min: -8, max: 8, step: 1, showByDefault: false }),
+      prefetchTileRadius: new NumberField(0, { min: 0, max: 4, step: 1, showByDefault: false }),
       refinementStrategy: new StringLiteralField('best-available', {
         values: ['best-available', 'no-overlap', 'never'],
         showByDefault: false,

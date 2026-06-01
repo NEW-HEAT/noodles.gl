@@ -722,6 +722,8 @@ describe('RasterTileLayerOp', () => {
       tileSize: 256,
       maxRequests: 12,
       maxCacheSize: 512,
+      zoomOffset: 1,
+      prefetchTileRadius: 1,
       refinementStrategy: 'best-available',
       lodStrategy: 'coverage',
       placeholderWireframe: false,
@@ -731,6 +733,8 @@ describe('RasterTileLayerOp', () => {
     expect(layer.type).toEqual('TileLayer')
     expect(layer.id).toEqual('/satellite-basemap')
     expect(layer.lodStrategy).toEqual('coverage')
+    expect(layer.zoomOffset).toEqual(1)
+    expect(layer.prefetchTileRadius).toEqual(1)
     expect(layer.maxRequests).toEqual(12)
     expect(layer.maxCacheSize).toEqual(512)
     expect(layer.refinementStrategy).toEqual('best-available')
@@ -747,6 +751,8 @@ describe('RasterTileLayerOp', () => {
       tileSize: 256,
       maxRequests: 12,
       maxCacheSize: 512,
+      zoomOffset: 1,
+      prefetchTileRadius: 1,
       refinementStrategy: 'best-available',
       lodStrategy: 'coverage',
       placeholderWireframe: false,
