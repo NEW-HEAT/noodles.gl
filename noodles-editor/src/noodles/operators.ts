@@ -3512,6 +3512,10 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
       //   bearing: new NumberField(0, { optional: true }),
       // }, { optional: true }),
       viewState: new UnknownField({}, { showByDefault: false }),
+      controller: new UnknownField(undefined, {
+        optional: true,
+        showByDefault: false,
+      }),
     }
   }
   createOutputs() {
@@ -3527,6 +3531,7 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
     basemap,
     views,
     layerFilter,
+    controller,
   }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     // Validate the ViewState to ensure lat/lng are within valid bounds
     validateViewState(viewState)
@@ -3546,6 +3551,7 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
       viewState: { ...basemapViewState, ...viewState },
       layerFilter,
       widgets,
+      ...(controller !== undefined ? { controller } : {}),
     }
 
     // Prefer viewState values when using a basemap
