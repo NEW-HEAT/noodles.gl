@@ -2464,6 +2464,15 @@ describe('Tile3DLayerOp', () => {
     expect(layer.data).toEqual(GOOGLE_URL)
   })
 
+  it('does not resolve the Google tileset URL while hidden', async () => {
+    const op = new Tile3DLayerOp('/tile3d-0')
+    const { layer } = await op.execute({ provider: 'Google', visible: false })
+    expect(layer.type).toEqual('Tile3DLayer')
+    expect(layer.visible).toBe(false)
+    expect(layer.data).toEqual('')
+    expect(layer.loadOptions).toBeUndefined()
+  })
+
   it('uses the Cesium tileset URL when provider is Cesium', async () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const { layer } = await op.execute({ provider: 'Cesium' })

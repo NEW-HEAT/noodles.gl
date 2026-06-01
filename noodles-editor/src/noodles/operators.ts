@@ -5429,32 +5429,21 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
     const GOOGLE_TILESET_URL = 'https://tile.googleapis.com/v1/3dtiles/root.json'
     const NYC_CESIUM_TILESET_URL = 'https://assets.ion.cesium.com/242005/tileset.json'
 
+    if (props.visible === false) {
+      return {
+        layer: {
+          ...parseLayerProps<Tile3DLayerProps>(props),
+          type: 'Tile3DLayer' as const,
+          data: '',
+          id: this.id,
+          updateTriggers: gatherTriggers(this.inputs, props),
+        },
+      }
+    }
+
     const { getKey } = getKeysStore()
     const GOOGLE_MAPS_API_KEY = getKey('googleMaps')
     const CESIUM_ACCESS_TOKEN = getKey('cesium')
-
-    if (provider === 'Google' && !GOOGLE_MAPS_API_KEY && props.visible === false) {
-      return {
-        layer: {
-          ...parseLayerProps<Tile3DLayerProps>(props),
-          type: 'Tile3DLayer' as const,
-          data: '',
-          id: this.id,
-          updateTriggers: gatherTriggers(this.inputs, props),
-        },
-      }
-    }
-    if (provider === 'Cesium' && !CESIUM_ACCESS_TOKEN && props.visible === false) {
-      return {
-        layer: {
-          ...parseLayerProps<Tile3DLayerProps>(props),
-          type: 'Tile3DLayer' as const,
-          data: '',
-          id: this.id,
-          updateTriggers: gatherTriggers(this.inputs, props),
-        },
-      }
-    }
 
     if (provider === 'Google' && !GOOGLE_MAPS_API_KEY) {
       throw new Error('Tile3DLayer: Google Maps API key is not set (add it in Settings > API Keys)')
