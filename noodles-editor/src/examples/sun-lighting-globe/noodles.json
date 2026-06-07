@@ -39,11 +39,11 @@
       "type": "MapViewStateOp",
       "data": {
         "inputs": {
-          "longitude": 0,
-          "latitude": 20,
-          "zoom": 2.4,
-          "pitch": 0,
-          "bearing": 0
+          "longitude": -122.18,
+          "latitude": 46.24,
+          "zoom": 11.5,
+          "pitch": 60,
+          "bearing": 140
         },
         "locked": false
       },
@@ -95,8 +95,8 @@
         "inputs": {
           "baseTimestampMs": 1718971200000,
           "timeScale": 1,
-          "fullSunZoom": 2.8,
-          "directionalZoom": 4,
+          "fullSunZoom": 12,
+          "directionalZoom": 13,
           "ambientIntensity": 0.14,
           "sunIntensity": 3.2,
           "directionalIntensity": 0.9,
@@ -314,7 +314,7 @@
                         1,
                         1
                       ],
-                      "value": 25
+                      "value": 46.24
                     },
                     {
                       "id": "kf_latitude_mid",
@@ -326,7 +326,7 @@
                         1,
                         1
                       ],
-                      "value": -10
+                      "value": 46.42
                     },
                     {
                       "id": "kf_latitude_end",
@@ -338,7 +338,7 @@
                         1,
                         1
                       ],
-                      "value": 25
+                      "value": 46.24
                     }
                   ]
                 }
