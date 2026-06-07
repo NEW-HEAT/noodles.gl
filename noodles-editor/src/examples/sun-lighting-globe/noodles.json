@@ -1,0 +1,358 @@
+{
+  "nodes": [
+    {
+      "id": "/deck",
+      "type": "DeckRendererOp",
+      "data": {
+        "inputs": {
+          "basemap": null,
+          "controller": true
+        },
+        "visibleInputs": [
+          "effects",
+          "views",
+          "viewState",
+          "controller",
+          "basemap"
+        ],
+        "locked": false
+      },
+      "position": {
+        "x": 960,
+        "y": 0
+      }
+    },
+    {
+      "id": "/out",
+      "type": "OutOp",
+      "data": {
+        "inputs": {},
+        "locked": false
+      },
+      "position": {
+        "x": 1280,
+        "y": 0
+      }
+    },
+    {
+      "id": "/view-state",
+      "type": "MapViewStateOp",
+      "data": {
+        "inputs": {
+          "longitude": 0,
+          "latitude": 20,
+          "zoom": 2.4,
+          "pitch": 0,
+          "bearing": 0
+        },
+        "locked": false
+      },
+      "position": {
+        "x": -1040,
+        "y": -280
+      }
+    },
+    {
+      "id": "/split-view-state",
+      "type": "SplitMapViewStateOp",
+      "data": {
+        "inputs": {},
+        "locked": false
+      },
+      "position": {
+        "x": -690,
+        "y": -280
+      }
+    },
+    {
+      "id": "/globe-view",
+      "type": "GlobeViewOp",
+      "data": {
+        "inputs": {
+          "controller": true,
+          "parameters": {
+            "cull": true
+          },
+          "webMercatorFallbackZoom": 3.4
+        },
+        "visibleInputs": [
+          "controller",
+          "viewState",
+          "parameters",
+          "webMercatorFallbackZoom"
+        ],
+        "locked": false
+      },
+      "position": {
+        "x": -330,
+        "y": -280
+      }
+    },
+    {
+      "id": "/sun-lighting",
+      "type": "SunLightingEffectOp",
+      "data": {
+        "inputs": {
+          "baseTimestampMs": 1718971200000,
+          "timeScale": 1,
+          "fullSunZoom": 2.8,
+          "directionalZoom": 4,
+          "ambientIntensity": 0.14,
+          "sunIntensity": 3.2,
+          "directionalIntensity": 0.9,
+          "directionalDirection": [
+            -1,
+            -3,
+            -1
+          ],
+          "currentTimeSeconds": 0
+        },
+        "locked": false,
+        "visibleInputs": [
+          "currentTimeSeconds"
+        ]
+      },
+      "position": {
+        "x": -690,
+        "y": 80
+      }
+    },
+    {
+      "id": "/terrain-layer",
+      "type": "TerrainLayerOp",
+      "data": {
+        "inputs": {
+          "elevationData": "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+          "texture": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          "visible": true,
+          "opacity": 1,
+          "minZoom": 0,
+          "maxZoom": 24,
+          "meshMaxZoom": 8,
+          "textureMaxZoom": 8,
+          "maxRequests": 48,
+          "maxCacheSize": 512,
+          "debounceTime": 0,
+          "meshMaxError": 1,
+          "extent": [
+            -180,
+            -85.051129,
+            180,
+            85.051129
+          ],
+          "elevationDecoder": {
+            "rScaler": 256,
+            "gScaler": 1,
+            "bScaler": 0.00390625,
+            "offset": -32768
+          },
+          "bounds": null,
+          "color": "#ffffffff",
+          "wireframe": false,
+          "material": true,
+          "operation": "terrain+draw",
+          "parameters": {
+            "depthTest": true,
+            "cull": false
+          }
+        },
+        "visibleInputs": [
+          "elevationData",
+          "texture",
+          "visible",
+          "opacity",
+          "meshMaxZoom",
+          "textureMaxZoom",
+          "meshMaxError",
+          "extent",
+          "elevationDecoder",
+          "color",
+          "material",
+          "parameters"
+        ],
+        "locked": false
+      },
+      "position": {
+        "x": -330,
+        "y": 80
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "/deck.out.vis->/out.par.vis",
+      "source": "/deck",
+      "target": "/out",
+      "sourceHandle": "out.vis",
+      "targetHandle": "par.vis"
+    },
+    {
+      "id": "/view-state.out.viewState->/deck.par.viewState",
+      "source": "/view-state",
+      "target": "/deck",
+      "sourceHandle": "out.viewState",
+      "targetHandle": "par.viewState"
+    },
+    {
+      "id": "/view-state.out.viewState->/split-view-state.par.viewState",
+      "source": "/view-state",
+      "target": "/split-view-state",
+      "sourceHandle": "out.viewState",
+      "targetHandle": "par.viewState"
+    },
+    {
+      "id": "/view-state.out.viewState->/globe-view.par.viewState",
+      "source": "/view-state",
+      "target": "/globe-view",
+      "sourceHandle": "out.viewState",
+      "targetHandle": "par.viewState"
+    },
+    {
+      "id": "/globe-view.out.view->/deck.par.views",
+      "source": "/globe-view",
+      "target": "/deck",
+      "sourceHandle": "out.view",
+      "targetHandle": "par.views"
+    },
+    {
+      "id": "/split-view-state.out.zoom->/sun-lighting.par.zoom",
+      "source": "/split-view-state",
+      "target": "/sun-lighting",
+      "sourceHandle": "out.zoom",
+      "targetHandle": "par.zoom"
+    },
+    {
+      "id": "/sun-lighting.out.effect->/deck.par.effects",
+      "source": "/sun-lighting",
+      "target": "/deck",
+      "sourceHandle": "out.effect",
+      "targetHandle": "par.effects"
+    },
+    {
+      "id": "/terrain-layer.out.layer->/deck.par.layers",
+      "source": "/terrain-layer",
+      "target": "/deck",
+      "sourceHandle": "out.layer",
+      "targetHandle": "par.layers"
+    }
+  ],
+  "viewport": {
+    "x": 1034,
+    "y": 225,
+    "zoom": 0.62
+  },
+  "timeline": {
+    "sheetsById": {
+      "Noodles": {
+        "sequence": {
+          "length": 20,
+          "subUnitsPerUnit": 30,
+          "tracksByObject": {
+            "sun-lighting": {
+              "trackIdByPropPath": {
+                "currentTimeSeconds": "track_sun_current_time_seconds"
+              },
+              "trackData": {
+                "track_sun_current_time_seconds": {
+                  "type": "number",
+                  "keyframes": [
+                    {
+                      "id": "kf_sun_time_start",
+                      "position": 0,
+                      "connectedRight": true,
+                      "handles": [
+                        0,
+                        0,
+                        1,
+                        1
+                      ],
+                      "value": 0
+                    },
+                    {
+                      "id": "kf_sun_time_midday",
+                      "position": 10,
+                      "connectedRight": true,
+                      "handles": [
+                        0,
+                        0,
+                        1,
+                        1
+                      ],
+                      "value": 43200
+                    },
+                    {
+                      "id": "kf_sun_time_end",
+                      "position": 20,
+                      "connectedRight": false,
+                      "handles": [
+                        0,
+                        0,
+                        1,
+                        1
+                      ],
+                      "value": 86400
+                    }
+                  ]
+                }
+              }
+            },
+            "view-state": {
+              "trackIdByPropPath": {
+                "latitude": "track_view_state_latitude"
+              },
+              "trackData": {
+                "track_view_state_latitude": {
+                  "type": "number",
+                  "keyframes": [
+                    {
+                      "id": "kf_latitude_start",
+                      "position": 0,
+                      "connectedRight": true,
+                      "handles": [
+                        0,
+                        0,
+                        1,
+                        1
+                      ],
+                      "value": 25
+                    },
+                    {
+                      "id": "kf_latitude_mid",
+                      "position": 10,
+                      "connectedRight": true,
+                      "handles": [
+                        0,
+                        0,
+                        1,
+                        1
+                      ],
+                      "value": -10
+                    },
+                    {
+                      "id": "kf_latitude_end",
+                      "position": 20,
+                      "connectedRight": false,
+                      "handles": [
+                        0,
+                        0,
+                        1,
+                        1
+                      ],
+                      "value": 25
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "staticOverrides": {
+          "byObject": {}
+        }
+      }
+    },
+    "definitionVersion": "0.4.0",
+    "revisionHistory": []
+  },
+  "version": 7
+}

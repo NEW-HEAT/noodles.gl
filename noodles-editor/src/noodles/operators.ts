@@ -7,14 +7,19 @@ import type {
   ScreenGridLayerProps,
 } from '@deck.gl/aggregation-layers'
 import {
+  AmbientLight,
+  COORDINATE_SYSTEM,
   type DeckProps,
+  DirectionalLight,
   FirstPersonView,
   _GlobeView as GlobeView,
+  LightingEffect,
   type LayerExtension,
   type LayerProps,
   MapView,
   OrbitView,
   OrthographicView,
+  _SunLight as SunLight,
   WebMercatorViewport,
 } from '@deck.gl/core'
 import {
@@ -60,6 +65,7 @@ import type { EditableGeoJsonLayerProps } from '@deck.gl-community/editable-laye
 import type { ScenegraphLayerProps, SimpleMeshLayerProps } from '@deck.gl/mesh-layers'
 import type { Tileset3D } from '@loaders.gl/tiles'
 import { brightnessContrast, hueSaturation, vibrance } from '@luma.gl/effects'
+import { SphereGeometry } from '@luma.gl/engine'
 import { fitBounds } from '@math.gl/web-mercator'
 import * as Plot from '@observablehq/plot'
 import * as turf from '@turf/turf'
@@ -1488,6 +1494,7 @@ export class TimeOp extends Operator<TimeOp> {
       this.outputs.now.next(state.now)
       this.outputs.tick.next(state.tick)
       this.outputs.sequenceTime.next(state.sequenceTime)
+      this.markDirty()
     })
     this.subs.push(sub)
 
@@ -1523,8 +1530,7 @@ export class TimeOp extends Operator<TimeOp> {
   }
 
   execute(_: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    // Outputs are driven by the BehaviorSubject, not by execute()
-    return null
+    return this.timeState$.value
   }
 }
 
@@ -3573,6 +3579,170 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
   }
 }
 
+export type SunLightingBlend = {
+  sunBlend: number
+  directionalBlend: number
+}
+
+type LightDirection = [number, number, number]
+
+const DEFAULT_SUN_LIGHTING_BASE_TIMESTAMP_MS = Date.UTC(2024, 5, 21, 12)
+const DEFAULT_DIRECTIONAL_LIGHT_DIRECTION: LightDirection = [1, -8, -2.5]
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function smootherStep(value: number) {
+  const t = clamp01(value)
+  return t * t * t * (t * (t * 6 - 15) + 10)
+}
+
+export function computeSunLightingTimestampMs(
+  baseTimestampMs: number,
+  currentTimeSeconds: number,
+  timeScale = 1
+) {
+  return baseTimestampMs + currentTimeSeconds * timeScale * 1000
+}
+
+export function computeSunLightingBlend(
+  zoom: number,
+  fullSunZoom: number,
+  directionalZoom: number
+): SunLightingBlend {
+  if (directionalZoom <= fullSunZoom) {
+    return zoom <= fullSunZoom
+      ? { sunBlend: 1, directionalBlend: 0 }
+      : { sunBlend: 0, directionalBlend: 1 }
+  }
+
+  const directionalBlend = smootherStep((zoom - fullSunZoom) / (directionalZoom - fullSunZoom))
+  return {
+    sunBlend: 1 - directionalBlend,
+    directionalBlend,
+  }
+}
+
+function createSunLightingEffect({
+  timestampMs,
+  sunBlend,
+  directionalBlend,
+  ambientIntensity,
+  sunIntensity,
+  directionalIntensity,
+  directionalDirection,
+}: {
+  timestampMs: number
+  sunBlend: number
+  directionalBlend: number
+  ambientIntensity: number
+  sunIntensity: number
+  directionalIntensity: number
+  directionalDirection: LightDirection
+}) {
+  const ambientLight = new AmbientLight({
+    color: [255, 255, 255],
+    intensity: ambientIntensity,
+  })
+
+  const lights: Record<string, AmbientLight | DirectionalLight> = { ambientLight }
+
+  if (sunBlend > 0) {
+    lights.sunLight = new SunLight({
+      color: [255, 255, 255],
+      intensity: sunIntensity * sunBlend,
+      timestamp: timestampMs,
+      _shadow: false,
+    })
+  }
+
+  if (directionalBlend > 0) {
+    lights.directionalLight = new DirectionalLight({
+      color: [255, 255, 255],
+      intensity: directionalIntensity * directionalBlend,
+      direction: directionalDirection,
+      _shadow: false,
+    })
+  }
+
+  return new LightingEffect(lights)
+}
+
+export class SunLightingEffectOp extends Operator<SunLightingEffectOp> {
+  static displayName = 'Sun Lighting Effect'
+  static description =
+    'Create a deck.gl LightingEffect that drives _SunLight from timeline time and blends to directional lighting by zoom.'
+
+  createInputs() {
+    return {
+      baseTimestampMs: new NumberField(DEFAULT_SUN_LIGHTING_BASE_TIMESTAMP_MS, {
+        min: 0,
+        step: 1000,
+      }),
+      currentTimeSeconds: new NumberField(0, { step: 0.001 }),
+      timeScale: new NumberField(1, { step: 0.1 }),
+      zoom: new NumberField(0, { step: 0.01 }),
+      fullSunZoom: new NumberField(2.2, { step: 0.1 }),
+      directionalZoom: new NumberField(3.4, { step: 0.1 }),
+      ambientIntensity: new NumberField(0.5, { min: 0, step: 0.05 }),
+      sunIntensity: new NumberField(2, { min: 0, step: 0.05 }),
+      directionalIntensity: new NumberField(0.9, { min: 0, step: 0.05 }),
+      directionalDirection: new Vec3Field([...DEFAULT_DIRECTIONAL_LIGHT_DIRECTION], {
+        returnType: 'tuple',
+      }),
+    }
+  }
+
+  createOutputs() {
+    return {
+      effect: new EffectField(),
+      timestampMs: new NumberField(),
+      sunBlend: new NumberField(),
+      directionalBlend: new NumberField(),
+    }
+  }
+
+  execute({
+    baseTimestampMs,
+    currentTimeSeconds,
+    timeScale,
+    zoom,
+    fullSunZoom,
+    directionalZoom,
+    ambientIntensity,
+    sunIntensity,
+    directionalIntensity,
+    directionalDirection,
+  }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const timestampMs = computeSunLightingTimestampMs(
+      baseTimestampMs,
+      currentTimeSeconds,
+      timeScale
+    )
+    const { sunBlend, directionalBlend } = computeSunLightingBlend(
+      zoom,
+      fullSunZoom,
+      directionalZoom
+    )
+
+    return {
+      effect: createSunLightingEffect({
+        timestampMs,
+        sunBlend,
+        directionalBlend,
+        ambientIntensity,
+        sunIntensity,
+        directionalIntensity,
+        directionalDirection: directionalDirection as LightDirection,
+      }),
+      timestampMs,
+      sunBlend,
+      directionalBlend,
+    }
+  }
+}
+
 // ViewOp input order controls the order they show up in the UI. Order them by:
 // - common view props
 // - unique view props ordered by most to least often used.
@@ -4724,6 +4894,56 @@ export class ScenegraphLayerOp extends Operator<ScenegraphLayerOp> {
       type: 'ScenegraphLayer' as const,
       id: this.id,
       updateTriggers: gatherTriggers(this.inputs, props),
+    }
+    return { layer }
+  }
+}
+
+export class EarthSphereLayerOp extends Operator<EarthSphereLayerOp> {
+  static displayName = 'EarthSphereLayer'
+  static description = 'Render a lit cartesian sphere for GlobeView sunlight.'
+  static cacheable = false
+
+  createInputs() {
+    return {
+      visible: new BooleanField(true),
+      opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
+      radius: new NumberField(6300000, { min: 1, softMax: 10000000 }),
+      nlat: new NumberField(36, { min: 3, softMax: 180, step: 1, showByDefault: false }),
+      nlong: new NumberField(72, { min: 3, softMax: 360, step: 1, showByDefault: false }),
+      getColor: new ColorField('#ffffff', { transform: hexToColor }),
+      parameters: new CompoundPropsField(
+        {
+          depthTest: new BooleanField(true),
+        },
+        { showByDefault: false }
+      ),
+    }
+  }
+
+  createOutputs() {
+    return {
+      layer: new LayerField<SimpleMeshLayerProps>(),
+    }
+  }
+
+  execute({
+    radius,
+    nlat,
+    nlong,
+    ...props
+  }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const layer = {
+      ...parseLayerProps<SimpleMeshLayerProps>({
+        ...props,
+        data: [0],
+        mesh: new SphereGeometry({ radius, nlat, nlong }),
+        coordinateSystem: COORDINATE_SYSTEM.CARTESIAN,
+        getPosition: [0, 0, 0],
+      } as unknown as SimpleMeshLayerProps & { extensions: LayerExtensionFieldReturnValue[] }),
+      type: 'SimpleMeshLayer' as const,
+      id: this.id,
+      updateTriggers: gatherTriggers(this.inputs, { radius, nlat, nlong, ...props }),
     }
     return { layer }
   }
@@ -7774,6 +7994,7 @@ export const opTypes = {
   DeckRendererOp,
   DirectionsOp,
   DuckDbOp,
+  EarthSphereLayerOp,
   ExpressionOp,
   ExtentOp,
   FileOp,
@@ -7853,6 +8074,7 @@ export const opTypes = {
   SplitXYZOp,
   StringOp,
   SwitchOp,
+  SunLightingEffectOp,
   TableEditorOp,
   TerrainExtensionOp,
   TerrainLayerOp,

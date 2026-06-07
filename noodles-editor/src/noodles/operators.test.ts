@@ -1,4 +1,5 @@
 import { Temporal } from 'temporal-polyfill'
+import { COORDINATE_SYSTEM } from '@deck.gl/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NumberField } from './fields'
 import {
@@ -9,6 +10,7 @@ import {
   ConcatOp,
   DeckRendererOp,
   DuckDbOp,
+  EarthSphereLayerOp,
   ExpressionOp,
   FileOp,
   FilterOp,
@@ -30,10 +32,15 @@ import {
   RerouteOp,
   ScatterplotLayerOp,
   SelectOp,
+  SunLightingEffectOp,
   SwitchOp,
   Tile3DLayerOp,
+  TimeOp,
   TimeSeriesOp,
+  computeSunLightingBlend,
+  computeSunLightingTimestampMs,
 } from './operators'
+import { useTimelineStore } from '../timeline/timeline-store'
 import { setOp } from './store'
 import { isAccessor } from './utils/accessor-helpers'
 
@@ -771,6 +778,115 @@ describe('RasterTileLayerOp', () => {
     })
 
     expect(bitmapLayer.props._imageCoordinateSystem).toBe('default')
+  })
+})
+
+type InspectableLightingEffect = {
+  ambientLight?: { intensity: number }
+  directionalLights: Array<{ intensity: number; shadow: boolean; timestamp?: number }>
+}
+
+function inspectLightingEffect(effect: unknown) {
+  return effect as InspectableLightingEffect
+}
+
+describe('SunLightingEffectOp', () => {
+  it('advances lighting timestamp from raw currentTime seconds', () => {
+    const baseTimestampMs = Date.UTC(2026, 0, 1, 12)
+
+    expect(computeSunLightingTimestampMs(baseTimestampMs, 42)).toBe(baseTimestampMs + 42000)
+    expect(computeSunLightingTimestampMs(baseTimestampMs, 42, 2)).toBe(baseTimestampMs + 84000)
+  })
+
+  it('blends from full sun to directional lighting by zoom', () => {
+    expect(computeSunLightingBlend(2.2, 2.2, 3.4)).toEqual({
+      sunBlend: 1,
+      directionalBlend: 0,
+    })
+    expect(computeSunLightingBlend(3.4, 2.2, 3.4)).toEqual({
+      sunBlend: 0,
+      directionalBlend: 1,
+    })
+
+    const transition = computeSunLightingBlend(2.8, 2.2, 3.4)
+    expect(transition.sunBlend).toBeGreaterThan(0)
+    expect(transition.sunBlend).toBeLessThan(1)
+    expect(transition.directionalBlend).toBeGreaterThan(0)
+    expect(transition.directionalBlend).toBeLessThan(1)
+  })
+
+  it('creates full _SunLight at full-globe zoom', () => {
+    const operator = new SunLightingEffectOp('/sun-lighting')
+    const baseTimestampMs = Date.UTC(2026, 0, 1, 12)
+    const result = operator.execute({
+      baseTimestampMs,
+      currentTimeSeconds: 12,
+      timeScale: 1,
+      zoom: 1.5,
+      fullSunZoom: 2.2,
+      directionalZoom: 3.4,
+      ambientIntensity: 0.5,
+      sunIntensity: 2,
+      directionalIntensity: 0.9,
+      directionalDirection: [1, -8, -2.5],
+    })
+
+    const effect = inspectLightingEffect(result.effect)
+    expect(result.timestampMs).toBe(baseTimestampMs + 12000)
+    expect(result.sunBlend).toBe(1)
+    expect(result.directionalBlend).toBe(0)
+    expect(effect.ambientLight?.intensity).toBe(0.5)
+    expect(effect.directionalLights).toHaveLength(1)
+    expect(effect.directionalLights[0].timestamp).toBe(baseTimestampMs + 12000)
+    expect(effect.directionalLights[0].intensity).toBe(2)
+    expect(effect.directionalLights[0].shadow).toBe(false)
+  })
+
+  it('includes both sun and directional lights in the zoom transition', () => {
+    const operator = new SunLightingEffectOp('/sun-lighting')
+    const result = operator.execute({
+      baseTimestampMs: Date.UTC(2026, 0, 1, 12),
+      currentTimeSeconds: 0,
+      timeScale: 1,
+      zoom: 2.8,
+      fullSunZoom: 2.2,
+      directionalZoom: 3.4,
+      ambientIntensity: 0.5,
+      sunIntensity: 2,
+      directionalIntensity: 0.9,
+      directionalDirection: [1, -8, -2.5],
+    })
+
+    const effect = inspectLightingEffect(result.effect)
+    expect(result.sunBlend).toBeGreaterThan(0)
+    expect(result.directionalBlend).toBeGreaterThan(0)
+    expect(effect.directionalLights).toHaveLength(2)
+    expect(effect.directionalLights.some(light => light.timestamp !== undefined)).toBe(true)
+    expect(effect.directionalLights.every(light => light.shadow === false)).toBe(true)
+  })
+
+  it('omits _SunLight at close zoom', () => {
+    const operator = new SunLightingEffectOp('/sun-lighting')
+    const result = operator.execute({
+      baseTimestampMs: Date.UTC(2026, 0, 1, 12),
+      currentTimeSeconds: 0,
+      timeScale: 1,
+      zoom: 4,
+      fullSunZoom: 2.2,
+      directionalZoom: 3.4,
+      ambientIntensity: 0.5,
+      sunIntensity: 2,
+      directionalIntensity: 0.9,
+      directionalDirection: [1, -8, -2.5],
+    })
+
+    const effect = inspectLightingEffect(result.effect)
+    expect(result.sunBlend).toBe(0)
+    expect(result.directionalBlend).toBe(1)
+    expect(effect.directionalLights).toHaveLength(1)
+    expect(effect.directionalLights[0].timestamp).toBeUndefined()
+    expect(effect.directionalLights[0].intensity).toBe(0.9)
+    expect(effect.directionalLights[0].shadow).toBe(false)
   })
 })
 
@@ -2064,6 +2180,64 @@ describe('KmlToGeoJsonOp', () => {
     expect(result.geojson.features).toHaveLength(1)
     expect(result.geojson.features[0].geometry.type).toBe('Point')
     expect(result.geojson.features[0].properties?.name).toBe('Test Point')
+  })
+})
+
+describe('EarthSphereLayerOp', () => {
+  it('creates a cartesian SimpleMeshLayer sphere for sunlight shading', () => {
+    const operator = new EarthSphereLayerOp('/earth-sphere')
+    const { layer } = operator.execute({
+      visible: true,
+      opacity: 1,
+      radius: 6300000,
+      nlat: 18,
+      nlong: 36,
+      getColor: [255, 255, 255],
+      parameters: { depthTest: true },
+    })
+
+    expect(layer.type).toBe('SimpleMeshLayer')
+    expect(layer.id).toBe('/earth-sphere')
+    expect(layer.coordinateSystem).toBe(COORDINATE_SYSTEM.CARTESIAN)
+    expect(layer.getPosition).toEqual([0, 0, 0])
+    expect(layer.mesh).toBeDefined()
+  })
+})
+
+describe('TimeOp', () => {
+  beforeEach(() => {
+    useTimelineStore.getState().reset()
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    useTimelineStore.getState().reset()
+  })
+
+  it('returns raw timeline position during pull execution', async () => {
+    const operator = new TimeOp('/time')
+
+    useTimelineStore.getState().setPosition(3.25)
+
+    await expect(operator.pull()).resolves.toMatchObject({
+      sequenceTime: 3.25,
+    })
+
+    operator.dispose()
+  })
+
+  it('invalidates cached output when timeline position changes', async () => {
+    const operator = new TimeOp('/time')
+
+    useTimelineStore.getState().setPosition(2)
+    await expect(operator.pull()).resolves.toMatchObject({ sequenceTime: 2 })
+
+    useTimelineStore.getState().setPosition(7)
+    await expect(operator.pull()).resolves.toMatchObject({ sequenceTime: 7 })
+
+    operator.dispose()
   })
 })
 

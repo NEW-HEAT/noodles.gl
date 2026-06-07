@@ -29,6 +29,7 @@ export const categories = {
     'Viewer',
     'ViewState',
   ],
+  effect: ['SunLightingEffect'],
   geojson: ['GeoJson', 'GeoJsonTransform', 'KmlToGeoJson', 'Point', 'Rectangle'],
   layer: [
     'A5Layer',
@@ -55,6 +56,7 @@ export const categories = {
     'RasterTileLayer',
     'S2Layer',
     'ScatterplotLayer',
+    'EarthSphereLayer',
     'ScenegraphLayer',
     'ScreenGridLayer',
     'SimpleMeshLayer',

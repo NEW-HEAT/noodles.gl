@@ -36,7 +36,6 @@ import {
   ModifyMode,
   ViewMode,
 } from '@deck.gl-community/editable-layers'
-import { SkyboxLayer } from '@deck.gl-community/layers'
 import cx from 'classnames'
 import type { LayerExtension } from 'deck.gl'
 import * as deck from 'deck.gl'
@@ -177,7 +176,6 @@ type WidgetConstructor = new (props: Record<string, unknown>) => unknown
 
 const additionalLayerConstructors: Record<string, LayerConstructor> = {
   EditableGeoJsonLayer: EditableGeoJsonLayer as unknown as LayerConstructor,
-  SkyboxLayer: SkyboxLayer as unknown as LayerConstructor,
 }
 
 const editableGeoJsonModeConstructors: Record<string, unknown> = {
