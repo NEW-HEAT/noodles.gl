@@ -65,21 +65,17 @@
       }
     },
     {
-      "id": "/globe-view",
-      "type": "GlobeViewOp",
+      "id": "/map-view",
+      "type": "MapViewOp",
       "data": {
         "inputs": {
-          "controller": true,
-          "parameters": {
-            "cull": true
-          },
-          "webMercatorFallbackZoom": 3.4
+          "width": "100%",
+          "height": "100%"
         },
         "visibleInputs": [
-          "controller",
-          "viewState",
-          "parameters",
-          "webMercatorFallbackZoom"
+          "width",
+          "height",
+          "viewState"
         ],
         "locked": false
       },
@@ -201,15 +197,15 @@
       "targetHandle": "par.viewState"
     },
     {
-      "id": "/view-state.out.viewState->/globe-view.par.viewState",
+      "id": "/view-state.out.viewState->/map-view.par.viewState",
       "source": "/view-state",
-      "target": "/globe-view",
+      "target": "/map-view",
       "sourceHandle": "out.viewState",
       "targetHandle": "par.viewState"
     },
     {
-      "id": "/globe-view.out.view->/deck.par.views",
-      "source": "/globe-view",
+      "id": "/map-view.out.view->/deck.par.views",
+      "source": "/map-view",
       "target": "/deck",
       "sourceHandle": "out.view",
       "targetHandle": "par.views"
