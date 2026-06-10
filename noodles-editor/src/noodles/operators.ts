@@ -5957,6 +5957,7 @@ class RasterTileLayerOp extends Operator<RasterTileLayerOp> {
           new deck.BitmapLayer(otherProps, {
             image: data,
             bounds: [west, south, east, north],
+            material: false,
           }),
         ]
       },

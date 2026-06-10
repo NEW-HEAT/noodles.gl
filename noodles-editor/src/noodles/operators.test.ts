@@ -778,6 +778,7 @@ describe('RasterTileLayerOp', () => {
     })
 
     expect(bitmapLayer.props._imageCoordinateSystem).toBe('default')
+    expect(bitmapLayer.props.material).toBe(false)
   })
 })
 
