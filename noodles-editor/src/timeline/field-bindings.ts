@@ -29,6 +29,7 @@ import type { KeyframeValue, Point2D, Point3D, RGBA, Vec2, Vec3 } from './types'
 // Use a type alias to simplify field typing
 // biome-ignore lint/suspicious/noExplicitAny: Field type requires generic parameter
 type AnyField = Field<any>
+export type TimelineBindingMode = 'read-write' | 'read-only'
 
 // ============================================================================
 // Type Guards
@@ -251,7 +252,8 @@ export function bindFieldToTimeline(
   fieldName: string,
   field: AnyField,
   store?: TimelineStore,
-  subPath?: string[]
+  subPath?: string[],
+  mode: TimelineBindingMode = 'read-write'
 ): () => void {
   const timelineStore = store || useTimelineStore.getState()
   const fieldPath = getFieldPath(op.id, fieldName, subPath)
@@ -319,6 +321,12 @@ export function bindFieldToTimeline(
       debugTimeline(`Error in initial field sync for ${op.id}.${fieldName}:`, e)
     }
     updating = false
+  }
+
+  if (mode === 'read-only') {
+    return () => {
+      unsubscribePosition()
+    }
   }
 
   // Subscribe to field value changes -> update or create keyframe
@@ -426,7 +434,8 @@ function bindVecChannelToTimeline(
   fieldName: string,
   field: Vec2Field | Vec3Field | Point2DField | Point3DField,
   channelKey: string,
-  store?: TimelineStore
+  store?: TimelineStore,
+  mode: TimelineBindingMode = 'read-write'
 ): () => void {
   const timelineStore = store || useTimelineStore.getState()
   const fieldPath = getFieldPath(op.id, fieldName, [channelKey])
@@ -508,6 +517,12 @@ function bindVecChannelToTimeline(
   // Seed the guard so sibling fieldSub callbacks are filtered immediately,
   // even on tracks with no keyframes (where initialValue is undefined)
   if (lastKfValue === undefined) lastKfValue = getChannel()
+
+  if (mode === 'read-only') {
+    return () => {
+      unsubscribePosition()
+    }
+  }
 
   // Subscribe to field value changes -> update or create a keyframe on the channel track
   // Fires for any change to the Vec2/Vec3 field; we extract only our channel's value
@@ -592,7 +607,11 @@ function bindVecChannelToTimeline(
 }
 
 // Bind all animatable fields for an operator to the timeline, returns cleanup function
-export function bindOperatorToTimeline(op: Operator<IOperator>, store?: TimelineStore): () => void {
+export function bindOperatorToTimeline(
+  op: Operator<IOperator>,
+  store?: TimelineStore,
+  mode: TimelineBindingMode = 'read-write'
+): () => void {
   const cleanupFns: Array<() => void> = []
 
   for (const [fieldName, field] of Object.entries(op.inputs)) {
@@ -616,7 +635,8 @@ export function bindOperatorToTimeline(op: Operator<IOperator>, store?: Timeline
           fieldName,
           field as Vec2Field | Vec3Field | Point2DField | Point3DField,
           key,
-          store
+          store,
+          mode
         )
         cleanupFns.push(cleanup)
         replaceActiveBinding(`${op.id}.${fieldName}.${key}`, cleanup)
@@ -631,7 +651,14 @@ export function bindOperatorToTimeline(op: Operator<IOperator>, store?: Timeline
       for (const [subName, subField] of Object.entries(field.fields)) {
         if (subField instanceof CompoundPropsField || !isAnimatableField(subField as AnyField))
           continue
-        const cleanup = bindFieldToTimeline(op, fieldName, subField as AnyField, store, [subName])
+        const cleanup = bindFieldToTimeline(
+          op,
+          fieldName,
+          subField as AnyField,
+          store,
+          [subName],
+          mode
+        )
         cleanupFns.push(cleanup)
         replaceActiveBinding(`${op.id}.${fieldName}.${subName}`, cleanup)
       }
@@ -641,7 +668,14 @@ export function bindOperatorToTimeline(op: Operator<IOperator>, store?: Timeline
     // For ListField, bind the inner field
     const actualField = field instanceof ListField ? field.field : field
 
-    const cleanup = bindFieldToTimeline(op, fieldName, actualField as AnyField, store)
+    const cleanup = bindFieldToTimeline(
+      op,
+      fieldName,
+      actualField as AnyField,
+      store,
+      undefined,
+      mode
+    )
     cleanupFns.push(cleanup)
 
     // Track binding for later cleanup
@@ -678,7 +712,8 @@ export function unbindOperatorFromTimeline(opId: string): void {
 // Bind all operators to the timeline, returns map of cleanup functions by operator ID
 export function bindAllOperatorsToTimeline(
   operators: Operator<IOperator>[],
-  store?: TimelineStore
+  store?: TimelineStore,
+  mode: TimelineBindingMode = 'read-write'
 ): Map<string, () => void> {
   const cleanupFns = new Map<string, () => void>()
 
@@ -686,7 +721,7 @@ export function bindAllOperatorsToTimeline(
     // Skip special operators
     if (op.id === '/out') continue
 
-    const cleanup = bindOperatorToTimeline(op, store)
+    const cleanup = bindOperatorToTimeline(op, store, mode)
     cleanupFns.set(op.id, cleanup)
   }
 

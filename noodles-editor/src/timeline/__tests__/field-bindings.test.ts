@@ -437,6 +437,32 @@ describe('bindFieldToTimeline - integration', () => {
   })
 
   describe('auto-keyframe insertion on value change', () => {
+    it('read-only bindings scrub fields without writing field changes back to keyframes', () => {
+      const op = makeOp('/test-op')
+      const field = new NumberField(0)
+      const store = getTimelineStore()
+      const fieldPath = 'test-op / val'
+
+      store.getOrCreateTrack(fieldPath, 0)
+      store.addKeyframe(fieldPath, { position: 0, value: 0, interpolation: 'linear' })
+      store.addKeyframe(fieldPath, { position: 10, value: 100, interpolation: 'linear' })
+
+      const cleanup = bindFieldToTimeline(op, 'val', field, undefined, undefined, 'read-only')
+
+      store.setPosition(5)
+      expect(field.value).toBeCloseTo(50, 0)
+
+      field.setValue(75)
+
+      const track = store.getTrack(fieldPath)
+      expect(track?.keyframes).toHaveLength(2)
+      expect(track?.keyframes.find(kf => Math.abs(kf.position - 5) < 0.001)).toBeUndefined()
+      expect(track?.keyframes[0].value).toBe(0)
+      expect(track?.keyframes[1].value).toBe(100)
+
+      cleanup()
+    })
+
     it('inserts keyframe when new value differs from interpolated', () => {
       const op = makeOp('/test-op')
       const field = new NumberField(0)
