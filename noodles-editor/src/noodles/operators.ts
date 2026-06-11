@@ -188,6 +188,7 @@ import { getKeysStore } from './keys-store'
 import { getAllOps, getOp } from './store'
 import type { ExtensionConstructorArgs, LayerPropsValue } from './types'
 import { composeAccessor, isAccessor } from './utils/accessor-helpers'
+import { deepEqual } from './utils/deep-equal'
 import type { ExtractProps } from './utils/extract-props'
 import { projectScheme } from './utils/filesystem'
 import type { OpId } from './utils/id-utils'
@@ -207,6 +208,13 @@ export enum PullExecutionStatus {
   DIRTY = 'dirty', // Needs re-execution
   COMPUTING = 'computing', // Currently executing
   ERROR = 'error', // Execution failed
+}
+
+function fieldValueChanged(field: Field, oldValue: unknown, newValue: unknown): boolean {
+  if (field.useDeepEquality) {
+    return !deepEqual(oldValue, newValue, field.maxDepth)
+  }
+  return oldValue !== newValue
 }
 
 // An Operator is a collection of Fields, and a transform function responsible
@@ -503,8 +511,9 @@ export abstract class Operator<OP extends IOperator> {
       // Update output fields for UI/debugging purposes only
       // In pull mode, this is not for propagation but for inspection
       for (const [key, field] of Object.entries(this.outputs)) {
-        if (field.value !== finalResult[key]) {
-          field.next(finalResult[key])
+        const newValue = finalResult[key]
+        if (fieldValueChanged(field, field.value, newValue)) {
+          field.next(newValue)
         }
       }
 
@@ -662,9 +671,10 @@ export abstract class Operator<OP extends IOperator> {
       )
       .subscribe(outputValues => {
         for (const [key, field] of Object.entries(this.outputs)) {
-          if (field.value !== outputValues[key]) {
+          const newValue = outputValues[key]
+          if (fieldValueChanged(field, field.value, newValue)) {
             // Skip schema validation on outputs
-            field.next(outputValues[key])
+            field.next(newValue)
           }
         }
       })
@@ -1797,8 +1807,12 @@ const duckDbInstance = (async () => {
     }
   }
 
-  // Select a bundle based on browser checks
-  const bundle = await duckdb.selectBundle(bundles)
+  // Exclude the wasm_threads (coi) bundle — the spatial extension binary for
+  // wasm_threads has a shared-memory mismatch (declared=0, imported=1) that
+  // causes a hard LinkError.  The eh build is fully capable for our needs.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { coi: _coi, ...nonThreadedBundles } = bundles
+  const bundle = await duckdb.selectBundle(nonThreadedBundles)
   const workerUrl = bundle.mainWorker!
 
   // Handle cross-origin URLs by fetching and creating blob URL
@@ -3486,6 +3500,27 @@ export class MaplibreBasemapOp extends Operator<MaplibreBasemapOp> {
   }
 }
 
+function flattenWidgets(widgets: unknown[] | undefined): unknown[] {
+  if (!Array.isArray(widgets)) return []
+  return widgets.flatMap(widget => {
+    if (Array.isArray(widget)) return flattenWidgets(widget)
+    return widget == null ? [] : [widget]
+  })
+}
+
+function normalizePopupWidget(widget: unknown, fallbackId: string, index: number) {
+  if (!widget || typeof widget !== 'object') return null
+  return {
+    id: `${fallbackId}-${index}`,
+    content: '',
+    defaultIsOpen: false,
+    closeButton: false,
+    arrow: false,
+    type: 'PopupWidget',
+    ...(widget as Record<string, unknown>),
+  }
+}
+
 export class DeckRendererOp extends Operator<DeckRendererOp> {
   static displayName = 'DeckRenderer'
   static description = 'Render a deck.gl visualization with layers and effects.'
@@ -3526,7 +3561,7 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
   }
   createOutputs() {
     return {
-      vis: new VisualizationField(),
+      vis: new VisualizationField(undefined, { useDeepEquality: true, maxDepth: 3 }),
     }
   }
   execute({
@@ -3556,7 +3591,7 @@ export class DeckRendererOp extends Operator<DeckRendererOp> {
       ...(views?.length > 0 ? { views } : {}),
       viewState: { ...basemapViewState, ...viewState },
       layerFilter,
-      widgets,
+      widgets: flattenWidgets(widgets),
       ...(controller !== undefined ? { controller } : {}),
     }
 
@@ -3751,6 +3786,8 @@ export class SunLightingEffectOp extends Operator<SunLightingEffectOp> {
 // Base view fields that apply to all view types
 function createBaseViewFields() {
   return {
+    // Controller enables user interaction (pan, zoom, rotate)
+    controller: new BooleanField(true),
     x: new NumberField(0, { showByDefault: false }),
     y: new NumberField(0, { showByDefault: false }),
     width: new StringField('100%'),
@@ -3793,6 +3830,8 @@ function createGeoViewFields() {
       showByDefault: false,
     }),
     farZMultiplier: new NumberField(1.01, { min: 0, softMax: 1_000, showByDefault: false }),
+    minZoom: new NumberField(0, { min: -24, max: 24, step: 0.1, showByDefault: false }),
+    maxZoom: new NumberField(24, { min: 0, max: 24, step: 0.1, showByDefault: false }),
   }
 }
 
@@ -3924,6 +3963,33 @@ export class GlobeViewOp extends Operator<GlobeViewOp> {
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
     validateViewState(props.viewState)
     return { view: new GlobeView({ id: this.id, ...props }) }
+  }
+}
+
+export class PopupWidgetOp extends Operator<PopupWidgetOp> {
+  static displayName = 'PopupWidget'
+  static description = 'Anchored deck.gl popup widgets. Use marker-only props for map markers.'
+
+  createInputs() {
+    return {
+      widgets: new DataField(new ArrayField(new UnknownField())),
+    }
+  }
+
+  createOutputs() {
+    return {
+      widget: new WidgetField(),
+    }
+  }
+
+  execute({ widgets }: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    return {
+      widget: Array.isArray(widgets)
+        ? widgets
+            .map((widget, index) => normalizePopupWidget(widget, this.id, index))
+            .filter(Boolean)
+        : [],
+    }
   }
 }
 
@@ -4665,6 +4731,44 @@ export class TripsLayerOp extends Operator<TripsLayerOp> {
   }
 }
 
+export class SkyboxLayerOp extends Operator<SkyboxLayerOp> {
+  static displayName = 'SkyboxLayer'
+  static description = 'Render a cubemap skybox behind the scene'
+  static cacheable = false
+  createInputs() {
+    return {
+      visible: new BooleanField(true),
+      opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
+      cubemap: new UnknownField(null),
+      orientation: new StringLiteralField('y-up', {
+        values: ['y-up', 'default'],
+      }),
+      parameters: new CompoundPropsField(
+        {
+          cullMode: new StringField('front'),
+          depthTest: new BooleanField(false),
+          depthWriteEnabled: new BooleanField(false),
+          depthCompare: new StringField('always'),
+        },
+        { showByDefault: false }
+      ),
+    }
+  }
+  createOutputs() {
+    return {
+      layer: new LayerField<LayerProps>(),
+    }
+  }
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const layer = {
+      ...parseLayerProps<LayerProps>(props as LayerProps & { extensions: [] }),
+      type: 'SkyboxLayer' as const,
+      id: this.id,
+    }
+    return { layer }
+  }
+}
+
 export class SolidPolygonLayerOp extends Operator<SolidPolygonLayerOp> {
   static displayName = 'SolidPolygonLayer'
   static description = 'Render a set of solid polygons on the map'
@@ -4753,6 +4857,7 @@ export class TextLayerOp extends Operator<TextLayerOp> {
       parameters: new CompoundPropsField(
         {
           depthTest: new BooleanField(true),
+          depthWriteEnabled: new BooleanField(true),
           cullMode: new StringLiteralField('none', {
             values: ['none', 'back', 'front'],
           }),
@@ -4779,42 +4884,80 @@ export class TextLayerOp extends Operator<TextLayerOp> {
   }
 }
 
+const DEFAULT_ICON_ATLAS_URL =
+  'https://raw.githubusercontent.com/visgl/deck.gl-data/master/website/icon-atlas.png'
+const DEFAULT_ICON_MAPPING_URL =
+  'https://raw.githubusercontent.com/visgl/deck.gl-data/master/website/icon-atlas.json'
+
+function shouldUsePrepackedIconAtlas({
+  data,
+  getIcon,
+  iconAtlas,
+  iconMapping,
+}: {
+  data: unknown
+  getIcon: unknown
+  iconAtlas: unknown
+  iconMapping: unknown
+}) {
+  if (!iconAtlas || !iconMapping) return false
+  if (typeof getIcon !== 'function') return true
+  if (iconAtlas !== DEFAULT_ICON_ATLAS_URL || iconMapping !== DEFAULT_ICON_MAPPING_URL) {
+    return true
+  }
+
+  const firstDatum = Array.isArray(data) ? data[0] : undefined
+  if (!firstDatum) return false
+
+  try {
+    return typeof getIcon(firstDatum, { index: 0 }) === 'string'
+  } catch {
+    return false
+  }
+}
+
 export class IconLayerOp extends Operator<IconLayerOp> {
   static displayName = 'IconLayer'
   static description = 'Render a set of icons on the map'
   static cacheable = false
+  private _iconCache = new Map<
+    string,
+    {
+      data: { url: string; width: number; height: number; id: string }
+      accessor: () => { url: string; width: number; height: number; id: string }
+    }
+  >()
+  private readonly MAX_CACHE_SIZE = 50
+
   createInputs() {
     return {
       data: new DataField(),
       visible: new BooleanField(true),
       opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
       getPosition: new Point3DField([0, 0, 0], { returnType: 'tuple', accessor: true }),
-      iconAtlas: new StringField(
-        'https://raw.githubusercontent.com/visgl/deck.gl-data/master/website/icon-atlas.png',
-        { showByDefault: false }
-      ),
-      iconMapping: new FileUrlField(
-        'https://raw.githubusercontent.com/visgl/deck.gl-data/master/website/icon-atlas.json',
-        { showByDefault: false, accept: '.json' }
-      ),
+      iconAtlas: new FileUrlField(DEFAULT_ICON_ATLAS_URL, {
+        showByDefault: false,
+        accept: '.png,.jpg,.jpeg,.gif,.webp,.svg',
+      }),
+      iconMapping: new UnknownField(DEFAULT_ICON_MAPPING_URL, { showByDefault: false }),
       billboard: new BooleanField(true),
       getIcon: new UnknownField(null, { accessor: true }), // Union of { url: string, width: number, height: number } or url: string, plus accessors
       getSize: new NumberField(1, { min: 0, softMax: 100, accessor: true }),
       sizeUnits: new StringLiteralField('pixels', {
-        values: ['pixels', 'meters'],
+        values: ['pixels', 'meters', 'common'],
         showByDefault: false,
       }),
       sizeScale: new NumberField(1, { min: 0, softMax: 10_000, showByDefault: false }),
       sizeMinPixels: new NumberField(0, { min: 0, softMax: 10_000, showByDefault: false }),
-      sizeMaxPixels: new NumberField(100, { min: 0, softMax: 10_000, showByDefault: false }),
+      sizeMaxPixels: new NumberField(2048, { min: 0, softMax: 10_000, showByDefault: false }),
       getPixelOffset: new Vec2Field(
         { x: 0, y: 0 },
         { returnType: 'tuple', accessor: true, showByDefault: false }
       ),
       getColor: new ColorField('#fff', { accessor: true, transform: hexToColor }),
       getAngle: new NumberField(0, { accessor: true, showByDefault: false }),
-      sizeBasis: new StringLiteralField('pixels', {
-        values: ['pixels', 'meters', 'common'],
+      sizeBasis: new StringLiteralField('height', {
+        values: ['height', 'width'],
         optional: true,
       }),
       parameters: new CompoundPropsField(
@@ -4831,17 +4974,231 @@ export class IconLayerOp extends Operator<IconLayerOp> {
       layer: new LayerField<IconLayerProps>(),
     }
   }
-  execute(_props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    const { getIcon, iconMapping, iconAtlas, ...rest } = _props
+  async execute(
+    _props: ExtractProps<typeof this.inputs>
+  ): Promise<ExtractProps<typeof this.outputs>> {
+    const { getIcon, iconMapping, iconAtlas, sizeMaxPixels, ...rest } = _props
+    const data = rest.data as unknown
+    const hasRenderableRows = Array.isArray(data) ? data.length > 0 : Boolean(data)
+
+    if (rest.visible === false || !hasRenderableRows) {
+      const props: IconLayerProps = {
+        ...rest,
+        ...(getIcon != null ? { getIcon } : {}),
+        sizeMaxPixels,
+      }
+      const layer = {
+        ...parseLayerProps<IconLayerProps>(props),
+        type: 'IconLayer' as const,
+        id: this.id,
+        updateTriggers: gatherTriggers(this.inputs, props),
+      }
+      return { layer }
+    }
+
+    const resolveProjectUrl = async (url: string): Promise<string> => {
+      if (!url?.startsWith(projectScheme)) {
+        return url
+      }
+
+      const { readAssetBinary } = await import('./storage')
+      const { useFileSystemStore } = await import('./filesystem-store')
+      const { currentProjectName, activeStorageType } = useFileSystemStore.getState()
+      if (!currentProjectName) {
+        throw new Error('No project loaded. Please save or load a project first.')
+      }
+
+      const fileName = url.substring(projectScheme.length)
+      const result = await readAssetBinary(activeStorageType, currentProjectName, fileName)
+      if (!result.success) {
+        throw new Error(result.error.message)
+      }
+
+      const ext = fileName.toLowerCase().split('.').pop()
+      const mimeTypes: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        svg: 'image/svg+xml',
+      }
+      const blob = new Blob([result.data], {
+        type: mimeTypes[ext || ''] || 'application/octet-stream',
+      })
+      return URL.createObjectURL(blob)
+    }
+
+    const resolveImageWithDimensions = async (
+      url: string,
+      maxDisplaySize: number
+    ): Promise<{ url: string; width: number; height: number; id: string }> => {
+      const resolvedUrl = await resolveProjectUrl(url)
+      return new Promise((resolve, reject) => {
+        const img = new Image()
+        img.onload = () => {
+          const naturalWidth = img.naturalWidth
+          const naturalHeight = img.naturalHeight
+          const maxDimension = Math.min(maxDisplaySize * 2, 512)
+          const aspectRatio = naturalWidth / naturalHeight
+          let width = naturalWidth
+          let height = naturalHeight
+
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              width = maxDimension
+              height = Math.round(maxDimension / aspectRatio)
+            } else {
+              height = maxDimension
+              width = Math.round(maxDimension * aspectRatio)
+            }
+          }
+
+          resolve({ url: resolvedUrl, width, height, id: url })
+        }
+        img.onerror = () => reject(new Error(`Failed to load image from ${url}`))
+        img.src = resolvedUrl
+      })
+    }
+
+    let iconProps: Partial<IconLayerProps> = {}
+
+    if (typeof getIcon === 'function') {
+      const usePrepackedIconAtlas = shouldUsePrepackedIconAtlas({
+        data: rest.data,
+        getIcon,
+        iconAtlas,
+        iconMapping,
+      })
+      iconProps = {
+        ...(usePrepackedIconAtlas ? { iconMapping, iconAtlas } : {}),
+        getIcon,
+      }
+    } else if (typeof getIcon === 'string' && getIcon.trim().length > 0) {
+      const cacheKey = `${getIcon}:${sizeMaxPixels}`
+      let cached = this._iconCache.get(cacheKey)
+
+      if (!cached) {
+        const iconData = await resolveImageWithDimensions(getIcon, sizeMaxPixels)
+        cached = { data: iconData, accessor: () => iconData }
+
+        if (this._iconCache.size >= this.MAX_CACHE_SIZE) {
+          const firstKey = this._iconCache.keys().next().value
+          if (firstKey) this._iconCache.delete(firstKey)
+        }
+
+        this._iconCache.set(cacheKey, cached)
+      } else {
+        this._iconCache.delete(cacheKey)
+        this._iconCache.set(cacheKey, cached)
+      }
+
+      iconProps = { getIcon: cached.accessor }
+    } else if (getIcon != null) {
+      iconProps = { getIcon }
+    } else if (iconAtlas && iconMapping) {
+      iconProps = {
+        iconMapping,
+        iconAtlas: typeof iconAtlas === 'string' ? await resolveProjectUrl(iconAtlas) : iconAtlas,
+      }
+    }
 
     const props: IconLayerProps = {
       ...rest,
-      ...(typeof getIcon === 'function' ? { getIcon } : { iconMapping, iconAtlas }),
+      ...iconProps,
+      sizeMaxPixels,
     }
 
     const layer = {
       ...parseLayerProps<IconLayerProps>(props),
       type: 'IconLayer' as const,
+      id: this.id,
+      updateTriggers: gatherTriggers(this.inputs, props),
+    }
+    return { layer }
+  }
+}
+
+/**
+ * IconClusterLayerOp - Supercluster-based point clustering with globe visibility support
+ *
+ * This operator creates an IconClusterLayer that:
+ * - Uses Supercluster for efficient point clustering
+ * - Supports dynamic clustering (re-clusters based on visible points)
+ * - Has built-in globe visibility constraints (opacity fading for back-of-globe)
+ * - Renders clusters as circles with count labels, individual points when unclustered
+ *
+ * Note: Requires IconClusterLayer to be available in the consuming application's deck.gl.
+ * This layer is available in the NEW-HEAT/deck.gl fork.
+ */
+interface IconClusterLayerProps extends LayerProps {
+  data: unknown[]
+  getPosition?: ((d: unknown) => [number, number]) | [number, number]
+  getPointId?: ((d: unknown) => string | number) | string | number
+  clusterRadius?: number
+  clusterMaxZoom?: number
+  clusterFillColor?: [number, number, number, number]
+  clusterTextColor?: [number, number, number, number]
+  clusterRadiusScale?: number
+  clusterRadiusMinPixels?: number
+  clusterRadiusMaxPixels?: number
+  pointFillColor?: [number, number, number, number]
+  pointRadiusMinPixels?: number
+  pointRadiusMaxPixels?: number
+  fontFamily?: string
+  fontWeight?: string
+  sizeScale?: number
+  dynamicClustering?: boolean
+  sizeByCount?: boolean
+}
+
+export class IconClusterLayerOp extends Operator<IconClusterLayerOp> {
+  static displayName = 'IconClusterLayer'
+  static description =
+    'Cluster points using Supercluster with globe visibility support. Renders clusters as circles with counts.'
+  static cacheable = false
+  createInputs() {
+    return {
+      data: new DataField(),
+      visible: new BooleanField(true),
+      opacity: new NumberField(1, { min: 0, max: 1, step: 0.01 }),
+      getPosition: new Point3DField([0, 0, 0], { returnType: 'tuple', accessor: true }),
+      // Clustering configuration
+      clusterRadius: new NumberField(80, { min: 1, max: 500 }),
+      clusterMaxZoom: new NumberField(16, { min: 0, max: 24 }),
+      dynamicClustering: new BooleanField(false),
+      sizeByCount: new BooleanField(false),
+      // Cluster circle styling
+      clusterFillColor: new ColorField('#3366cc', { transform: hexToColor }),
+      clusterTextColor: new ColorField('#ffffff', { transform: hexToColor }),
+      clusterRadiusMinPixels: new NumberField(20, { min: 1, max: 200 }),
+      clusterRadiusMaxPixels: new NumberField(100, { min: 1, max: 500 }),
+      // Individual point styling
+      pointFillColor: new ColorField('#ff8c00', { transform: hexToColor }),
+      pointRadiusMinPixels: new NumberField(8, { min: 1, max: 100 }),
+      pointRadiusMaxPixels: new NumberField(20, { min: 1, max: 200 }),
+      // Text styling
+      fontFamily: new StringField('Monaco, monospace'),
+      fontWeight: new StringField('bold'),
+      clusterTextSize: new NumberField(16, { min: 1, max: 100 }),
+      // Parameters for WebGL settings (cullMode fix for GlobeView text)
+      parameters: new CompoundPropsField({
+        depthTest: new BooleanField(true),
+        cull: new BooleanField(true),
+      }),
+      // Extensions (for consistency with other layer ops)
+      extensions: new ListField(new ExtensionField()),
+    }
+  }
+  createOutputs() {
+    return {
+      layer: new LayerField<IconClusterLayerProps>(),
+    }
+  }
+  execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
+    const layer = {
+      ...parseLayerProps<IconClusterLayerProps>(props as Parameters<typeof parseLayerProps>[0]),
+      type: 'IconClusterLayer' as const,
       id: this.id,
       updateTriggers: gatherTriggers(this.inputs, props),
     }
@@ -5634,31 +5991,35 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
       layer: new LayerField<Tile3DLayerProps>(),
     }
   }
-  async execute({
-    flatLighting,
-    provider,
-    tilesetUrl,
-    throttleRequests,
-    maxRequests,
-    loadSiblings,
-    maxMemoryUsage,
-    maxScreenSpaceError,
-    memoryAdjustedScreenSpaceError,
-    ...props
-  }: ExtractProps<typeof this.inputs>) {
+  async execute(
+    input: ExtractProps<typeof this.inputs>
+  ): Promise<ExtractProps<typeof this.outputs>> {
+    const {
+      visible,
+      flatLighting,
+      provider,
+      tilesetUrl,
+      throttleRequests,
+      maxRequests,
+      loadSiblings,
+      maxMemoryUsage,
+      maxScreenSpaceError,
+      memoryAdjustedScreenSpaceError,
+      ...props
+    } = input
     const GOOGLE_TILESET_URL = 'https://tile.googleapis.com/v1/3dtiles/root.json'
     const NYC_CESIUM_TILESET_URL = 'https://assets.ion.cesium.com/242005/tileset.json'
 
-    if (props.visible === false) {
+    if (visible === false) {
       return {
         layer: {
-          ...parseLayerProps<Tile3DLayerProps>(props),
+          ...parseLayerProps<Tile3DLayerProps>({ ...props, visible } as never),
           type: 'Tile3DLayer' as const,
-          data: '',
           id: this.id,
-          updateTriggers: gatherTriggers(this.inputs, props),
+          data: '',
+          updateTriggers: gatherTriggers(this.inputs as never, { ...props, visible } as never),
         },
-      }
+      } as unknown as ExtractProps<typeof this.outputs>
     }
 
     const { getKey } = getKeysStore()
@@ -5682,41 +6043,27 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
 
     const _subLayerProps = flatLighting ? { scenegraph: { _lighting: 'flat' } } : undefined
 
+    const tilesetOptions = {
+      throttleRequests,
+      maxRequests,
+      loadSiblings,
+      maximumScreenSpaceError: maxScreenSpaceError,
+      maximumMemoryUsage: maxMemoryUsage,
+      memoryAdjustedScreenSpaceError,
+    }
+
     const loadOptions =
       provider === 'Google'
         ? {
             fetch: { headers: { 'X-GOOG-API-KEY': GOOGLE_MAPS_API_KEY } },
-            tileset: {
-              throttleRequests,
-              maxRequests,
-              loadSiblings,
-              maximumScreenSpaceError: maxScreenSpaceError,
-              maximumMemoryUsage: maxMemoryUsage,
-              memoryAdjustedScreenSpaceError,
-            },
+            tileset: tilesetOptions,
           }
         : provider === 'Cesium'
           ? {
-              tileset: {
-                throttleRequests,
-                maxRequests,
-                loadSiblings,
-                maximumScreenSpaceError: maxScreenSpaceError,
-                maximumMemoryUsage: maxMemoryUsage,
-                memoryAdjustedScreenSpaceError,
-              },
+              tileset: tilesetOptions,
               'cesium-ion': { accessToken: CESIUM_ACCESS_TOKEN },
             }
-          : {
-              tileset: {
-                throttleRequests,
-                maxRequests,
-                loadSiblings,
-                maximumScreenSpaceError: maxScreenSpaceError,
-                maximumMemoryUsage: maxMemoryUsage,
-                memoryAdjustedScreenSpaceError,
-              },
-            }
+          : { tileset: tilesetOptions }
 
     const onTilesetLoad = (tileset3d: Tileset3D) => {
       tileset3d.maximumMemoryUsage = maxMemoryUsage
@@ -5738,7 +6085,7 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
     }
 
     const layer = {
-      ...parseLayerProps<Tile3DLayerProps>(props),
+      ...parseLayerProps<Tile3DLayerProps>({ ...props, visible }),
       type: 'Tile3DLayer' as const,
       data,
       loader,
@@ -5748,7 +6095,7 @@ export class Tile3DLayerOp extends Operator<Tile3DLayerOp> {
       id: this.id,
       updateTriggers: gatherTriggers(this.inputs, props),
     }
-    return { layer }
+    return { layer } as unknown as ExtractProps<typeof this.outputs>
   }
 }
 
@@ -6230,6 +6577,10 @@ export class AccessorOp extends Operator<AccessorOp> {
         return undefined
       }
     }
+    Object.defineProperties(accessor, {
+      source: { value: `return ${expression}`, configurable: true, writable: false },
+      noodlesOperatorId: { value: this.id, configurable: true, writable: false },
+    })
     return { accessor }
   }
 }
@@ -7717,7 +8068,9 @@ export class DataFilterOp extends Operator<DataFilterOp> {
     return {
       data: new DataField(),
       categoryFilter: new StringField('', { placeholder: 'Run, Ride, Hike, etc. (empty = all)' }),
-      timeFilter: new StringLiteralField('all', { values: ['all', 'today', 'week', 'month', 'custom'] }),
+      timeFilter: new StringLiteralField('all', {
+        values: ['all', 'today', 'week', 'month', 'custom'],
+      }),
       startTime: new NumberField(0, { min: 0 }),
       endTime: new NumberField(0, { min: 0 }),
       userId: new StringField('', { placeholder: 'Filter by user ID' }),
@@ -7739,7 +8092,20 @@ export class DataFilterOp extends Operator<DataFilterOp> {
   }
 
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    const { data, categoryFilter, timeFilter, startTime, endTime, userId, useBounds, minLng, minLat, maxLng, maxLat, limit } = props
+    const {
+      data,
+      categoryFilter,
+      timeFilter,
+      startTime,
+      endTime,
+      userId,
+      useBounds,
+      minLng,
+      minLat,
+      maxLng,
+      maxLat,
+      limit,
+    } = props
     const items: Array<Record<string, unknown>> = Array.isArray(data) ? data : []
 
     const now = Date.now()
@@ -7747,29 +8113,42 @@ export class DataFilterOp extends Operator<DataFilterOp> {
     let filterEnd = now
 
     switch (timeFilter) {
-      case 'today': filterStart = now - 86400000; break
-      case 'week': filterStart = now - 604800000; break
-      case 'month': filterStart = now - 2592000000; break
-      case 'custom': filterStart = startTime || 0; filterEnd = endTime || now; break
+      case 'today':
+        filterStart = now - 86400000
+        break
+      case 'week':
+        filterStart = now - 604800000
+        break
+      case 'month':
+        filterStart = now - 2592000000
+        break
+      case 'custom':
+        filterStart = startTime || 0
+        filterEnd = endTime || now
+        break
     }
 
-    let filtered = items.filter((item) => {
+    let filtered = items.filter(item => {
       if (categoryFilter && (categoryFilter as string).trim()) {
-        const types = (categoryFilter as string).split(',').map((t: string) => t.trim().toLowerCase())
+        const types = (categoryFilter as string)
+          .split(',')
+          .map((t: string) => t.trim().toLowerCase())
         const itemType = ((item.activityType || item.sourceType || '') as string).toLowerCase()
         if (!types.includes(itemType)) return false
       }
       if (timeFilter !== 'all') {
         const itemStart = (item.startTime || (item.timestamps as number[])?.[0] || 0) as number
-        const itemEnd = (item.endTime || (item.timestamps as number[])?.[((item.timestamps as number[])?.length ?? 1) - 1] || 0) as number
+        const itemEnd = (item.endTime ||
+          (item.timestamps as number[])?.[((item.timestamps as number[])?.length ?? 1) - 1] ||
+          0) as number
         if (itemEnd < filterStart || itemStart > filterEnd) return false
       }
       if (userId && (userId as string).trim()) {
         if (item.userId !== (userId as string).trim()) return false
       }
       if (useBounds && Array.isArray(item.path) && item.path.length > 0) {
-        const inBounds = (item.path as [number, number][]).some(([lng, lat]) =>
-          lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat
+        const inBounds = (item.path as [number, number][]).some(
+          ([lng, lat]) => lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat
         )
         if (!inBounds) return false
       }
@@ -7778,7 +8157,7 @@ export class DataFilterOp extends Operator<DataFilterOp> {
 
     if (limit > 0) filtered = filtered.slice(0, limit)
 
-    const uniqueUserIds = new Set(filtered.map((a) => a.userId).filter(Boolean))
+    const uniqueUserIds = new Set(filtered.map(a => a.userId).filter(Boolean))
     return { data: filtered, count: filtered.length, uniqueUsers: uniqueUserIds.size }
   }
 }
@@ -7813,11 +8192,22 @@ export class ColorPaletteOp extends Operator<ColorPaletteOp> {
   }
 
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    const { routes: inputRoutes, theme, colorMode, customColor, opacity, colorOverrides: overridesJson } = props
+    const {
+      routes: inputRoutes,
+      theme,
+      colorMode,
+      customColor,
+      opacity,
+      colorOverrides: overridesJson,
+    } = props
     const routes = (inputRoutes as Array<Record<string, unknown>>) || []
 
     let colorOverrides: Record<string, string> = {}
-    try { colorOverrides = JSON.parse((overridesJson as string) || '{}') } catch { /* ignore */ }
+    try {
+      colorOverrides = JSON.parse((overridesJson as string) || '{}')
+    } catch {
+      /* ignore */
+    }
 
     const colored = utils.colorizeData(routes as Array<utils.ColorableData>, {
       theme: theme as string,
@@ -7856,8 +8246,19 @@ export class DataRequestOp extends Operator<DataRequestOp> {
   createInputs() {
     return {
       timePreset: new StringLiteralField('today', {
-        values: ['all', 'today', 'yesterday', 'last_7_days', 'this_week', 'last_week',
-          'this_month', 'last_30_days', 'last_90_days', 'this_year', 'custom'],
+        values: [
+          'all',
+          'today',
+          'yesterday',
+          'last_7_days',
+          'this_week',
+          'last_week',
+          'this_month',
+          'last_30_days',
+          'last_90_days',
+          'this_year',
+          'custom',
+        ],
       }),
       customStartTime: new NumberField(0, { min: 0 }),
       customEndTime: new NumberField(0, { min: 0 }),
@@ -7884,17 +8285,48 @@ export class DataRequestOp extends Operator<DataRequestOp> {
   }
 
   execute(props: ExtractProps<typeof this.inputs>): ExtractProps<typeof this.outputs> {
-    const { timePreset, customStartTime, customEndTime, activityTypes, userId, username,
-      useBounds, minLng, minLat, maxLng, maxLat, limit, offset, trigger } = props
+    const {
+      timePreset,
+      customStartTime,
+      customEndTime,
+      activityTypes,
+      userId,
+      username,
+      useBounds,
+      minLng,
+      minLat,
+      maxLng,
+      maxLat,
+      limit,
+      offset,
+      trigger,
+    } = props
 
-    const parsedTypes = (activityTypes as string).split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
+    const parsedTypes = (activityTypes as string)
+      .split(',')
+      .map((t: string) => t.trim())
+      .filter((t: string) => t.length > 0)
     const requestId = `req-${trigger}-${Date.now()}`
     const requestedAt = Date.now()
 
     return {
-      config: { timePreset, customStartTime, customEndTime, activityTypes: parsedTypes,
-        userId: (userId as string).trim(), username: (username as string).trim(),
-        useBounds, minLng, minLat, maxLng, maxLat, limit, offset, requestId, requestedAt },
+      config: {
+        timePreset,
+        customStartTime,
+        customEndTime,
+        activityTypes: parsedTypes,
+        userId: (userId as string).trim(),
+        username: (username as string).trim(),
+        useBounds,
+        minLng,
+        minLat,
+        maxLng,
+        maxLat,
+        limit,
+        offset,
+        requestId,
+        requestedAt,
+      },
       requestId,
       requestedAt,
     }
@@ -8025,6 +8457,7 @@ export const opTypes = {
   HexagonLayerOp,
   HSLOp,
   HueSaturationExtensionOp,
+  IconClusterLayerOp,
   IconLayerOp,
   JSONOp,
   KmlToGeoJsonOp,
@@ -8052,6 +8485,7 @@ export const opTypes = {
   PointCloudLayerOp,
   PointOp,
   PolygonLayerOp,
+  PopupWidgetOp,
   ProjectOp,
   QuadkeyLayerOp,
   RandomizeAttributeOp,
@@ -8067,6 +8501,7 @@ export const opTypes = {
   SimpleMeshLayerOp,
   SelectOp,
   SliceOp,
+  SkyboxLayerOp,
   SolidPolygonLayerOp,
   SortOp,
   SplitRGBAOp,

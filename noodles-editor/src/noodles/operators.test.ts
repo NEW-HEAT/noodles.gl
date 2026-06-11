@@ -32,6 +32,7 @@ import {
   RerouteOp,
   ScatterplotLayerOp,
   SelectOp,
+  SkyboxLayerOp,
   SunLightingEffectOp,
   SwitchOp,
   Tile3DLayerOp,
@@ -41,6 +42,7 @@ import {
   computeSunLightingTimestampMs,
 } from './operators'
 import { useTimelineStore } from '../timeline/timeline-store'
+import { getKeysStore } from './keys-store'
 import { setOp } from './store'
 import { isAccessor } from './utils/accessor-helpers'
 
@@ -699,8 +701,8 @@ describe('ScatterplotLayerOp', () => {
       otherProp: 1,
       extensions: [{ extension: { type: 'TestExtension' }, props: { test: 2 } }],
     })
-    // Extensions should be POJOs with the type property
-    expect(layer.extensions).toEqual([{ type: 'TestExtension' }])
+    // Extensions should stay as full POJOs so instantiation can pass constructor args.
+    expect(layer.extensions).toEqual([{ extension: { type: 'TestExtension' }, props: { test: 2 } }])
     // Extension props should still be merged into layer props
     expect(layer.test).toEqual(2)
     expect(layer.otherProp).toEqual(1)
@@ -777,7 +779,7 @@ describe('RasterTileLayerOp', () => {
       },
     })
 
-    expect(bitmapLayer.props._imageCoordinateSystem).toBe('default')
+    expect(bitmapLayer.props._imageCoordinateSystem).toBe(COORDINATE_SYSTEM.DEFAULT)
     expect(bitmapLayer.props.material).toBe(false)
   })
 })
@@ -888,6 +890,51 @@ describe('SunLightingEffectOp', () => {
     expect(effect.directionalLights[0].timestamp).toBeUndefined()
     expect(effect.directionalLights[0].intensity).toBe(0.9)
     expect(effect.directionalLights[0].shadow).toBe(false)
+  })
+})
+
+describe('SkyboxLayerOp', () => {
+  it('creates a skybox layer POJO for downstream deck instantiation', () => {
+    const operator = new SkyboxLayerOp('/skybox')
+    const cubemap = {
+      shape: 'image-texture-cube',
+      faces: {
+        '+X': '/sky/posx.jpg',
+        '-X': '/sky/negx.jpg',
+        '+Y': '/sky/posy.jpg',
+        '-Y': '/sky/negy.jpg',
+        '+Z': '/sky/posz.jpg',
+        '-Z': '/sky/negz.jpg',
+      },
+    }
+
+    const { layer } = operator.execute({
+      visible: true,
+      opacity: 0.75,
+      cubemap,
+      orientation: 'y-up',
+      parameters: {
+        cullMode: 'front',
+        depthTest: false,
+        depthWriteEnabled: false,
+        depthCompare: 'always',
+      },
+    })
+
+    expect(layer).toMatchObject({
+      id: '/skybox',
+      type: 'SkyboxLayer',
+      visible: true,
+      opacity: 0.75,
+      cubemap,
+      orientation: 'y-up',
+      parameters: {
+        cullMode: 'front',
+        depthTest: false,
+        depthWriteEnabled: false,
+        depthCompare: 'always',
+      },
+    })
   })
 })
 
@@ -2208,7 +2255,10 @@ describe('EarthSphereLayerOp', () => {
 describe('TimeOp', () => {
   beforeEach(() => {
     useTimelineStore.getState().reset()
-    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
   })
 
@@ -2638,6 +2688,17 @@ describe('Tile3DLayerOp', () => {
   const GOOGLE_URL = 'https://tile.googleapis.com/v1/3dtiles/root.json'
   const CESIUM_URL = 'https://assets.ion.cesium.com/242005/tileset.json'
 
+  beforeEach(() => {
+    getKeysStore().setProjectKeys({
+      googleMaps: 'test-google-key',
+      cesium: 'test-cesium-token',
+    })
+  })
+
+  afterEach(() => {
+    getKeysStore().setProjectKeys(undefined)
+  })
+
   it('defaults to the Google tileset URL when provider is Google', async () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const { layer } = await op.execute({})
@@ -2765,6 +2826,43 @@ describe('Tile3DLayerOp', () => {
     const op = new Tile3DLayerOp('/tile3d-0')
     const values = op.inputs.provider.choices.map(c => c.value)
     expect(values).toContain('Generic')
+  })
+
+  it('passes tile loading budget options through to Tile3DLayer', async () => {
+    const op = new Tile3DLayerOp('/tile3d-0')
+    const { layer } = await op.execute({
+      provider: 'Generic',
+      tilesetUrl: 'https://example.com/custom/tileset.json',
+      throttleRequests: true,
+      maxRequests: 12,
+      loadSiblings: false,
+      maxScreenSpaceError: 20,
+      maxMemoryUsage: 512,
+      memoryAdjustedScreenSpaceError: true,
+    })
+
+    expect(layer.loadOptions?.tileset).toMatchObject({
+      throttleRequests: true,
+      maxRequests: 12,
+      loadSiblings: false,
+      maximumScreenSpaceError: 20,
+      maximumMemoryUsage: 512,
+      memoryAdjustedScreenSpaceError: true,
+    })
+
+    const setProps = vi.fn()
+    const tileset = { maximumMemoryUsage: 0, setProps, options: {} }
+    layer.onTilesetLoad(tileset as never)
+    expect(setProps).toHaveBeenCalledWith(
+      expect.objectContaining({
+        throttleRequests: true,
+        maxRequests: 12,
+        loadSiblings: false,
+        maximumScreenSpaceError: 20,
+        maximumMemoryUsage: 512,
+        memoryAdjustedScreenSpaceError: true,
+      })
+    )
   })
 })
 

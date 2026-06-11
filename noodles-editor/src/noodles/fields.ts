@@ -9,6 +9,7 @@ import { debugSetValue } from '../utils/debug'
 import type { BetterDeckProps, BetterMapProps } from '../visualizations'
 import type { inputComponents } from './components/field-components'
 import type { IOperator, Operator } from './operators'
+import { deepEqual } from './utils/deep-equal'
 import type { ExtractProps } from './utils/extract-props'
 import { resolvePath } from './utils/path-utils'
 
@@ -33,6 +34,8 @@ type BaseFieldOptions = {
   transform?: (val: unknown, ...args: unknown[]) => unknown
   accessor?: boolean
   showByDefault?: boolean // Defaults to true. Set to false to hide field by default in UI.
+  useDeepEquality?: boolean // Avoid downstream updates when structured values are unchanged.
+  maxDepth?: number // Limit deep comparison cost. Infinity means unlimited.
 }
 
 type PointFieldOptions = BaseFieldOptions & {
@@ -99,6 +102,13 @@ export abstract class Field<
   // Should this field be shown by default in the UI? Defaults to true.
   showByDefault = true
 
+  // Use deep equality for stable value-typed fields that otherwise allocate new
+  // arrays/objects on each graph tick.
+  useDeepEquality = false
+
+  // Maximum object nesting depth for deep equality.
+  maxDepth = Infinity
+
   // Hold a reference to the operator that owns this field. Only used for debugging at the moment.
   op!: Operator<IOperator>
 
@@ -141,12 +151,27 @@ export abstract class Field<
   }
 
   // Wrap schema in additional functionality like optional, transform, accessor etc.
-  enhanceSchema({ accessor, optional, transform, showByDefault }: Partial<O>) {
+  enhanceSchema({
+    accessor,
+    optional,
+    transform,
+    showByDefault,
+    useDeepEquality,
+    maxDepth,
+  }: Partial<O>) {
     let schema = this.schema
 
     // Set showByDefault (defaults to true if not specified)
     if (showByDefault !== undefined) {
       this.showByDefault = showByDefault
+    }
+
+    if (useDeepEquality !== undefined) {
+      this.useDeepEquality = useDeepEquality
+    }
+
+    if (maxDepth !== undefined) {
+      this.maxDepth = maxDepth
     }
 
     if (accessor) {
@@ -191,6 +216,9 @@ export abstract class Field<
       error: _iss => path,
     })
     if (parsed.success) {
+      if (this.useDeepEquality && deepEqual(oldValue, parsed.data, this.maxDepth)) {
+        return
+      }
       debugSetValue('%s: %O -> %O', path, oldValue, parsed.data)
       this.next(parsed.data)
 

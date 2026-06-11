@@ -238,6 +238,12 @@ export function getFieldPath(opId: string, fieldName: string, subPath?: string[]
 // Track active bindings for cleanup
 const activeBindings = new Map<string, () => void>()
 
+function replaceActiveBinding(key: string, cleanup: () => void): void {
+  const existing = activeBindings.get(key)
+  if (existing) existing()
+  activeBindings.set(key, cleanup)
+}
+
 // Bind a single field to the timeline
 // Sets up two-way synchronization between field and timeline track, returns cleanup function
 export function bindFieldToTimeline(
@@ -613,7 +619,7 @@ export function bindOperatorToTimeline(op: Operator<IOperator>, store?: Timeline
           store
         )
         cleanupFns.push(cleanup)
-        activeBindings.set(`${op.id}.${fieldName}.${key}`, cleanup)
+        replaceActiveBinding(`${op.id}.${fieldName}.${key}`, cleanup)
       }
       continue
     }
@@ -627,7 +633,7 @@ export function bindOperatorToTimeline(op: Operator<IOperator>, store?: Timeline
           continue
         const cleanup = bindFieldToTimeline(op, fieldName, subField as AnyField, store, [subName])
         cleanupFns.push(cleanup)
-        activeBindings.set(`${op.id}.${fieldName}.${subName}`, cleanup)
+        replaceActiveBinding(`${op.id}.${fieldName}.${subName}`, cleanup)
       }
       continue
     }
@@ -640,12 +646,16 @@ export function bindOperatorToTimeline(op: Operator<IOperator>, store?: Timeline
 
     // Track binding for later cleanup
     const bindingKey = `${op.id}.${fieldName}`
-    activeBindings.set(bindingKey, cleanup)
+    replaceActiveBinding(bindingKey, cleanup)
   }
 
   return () => {
+    const cleanupSet = new Set(cleanupFns)
     for (const cleanup of cleanupFns) {
       cleanup()
+    }
+    for (const [key, cleanup] of activeBindings) {
+      if (cleanupSet.has(cleanup)) activeBindings.delete(key)
     }
   }
 }

@@ -1,4 +1,3 @@
-import type { NodeJSON } from 'SKIP-@xyflow/react'
 import type {
   Edge as ReactFlowEdge,
   ReactFlowJsonObject,
@@ -11,6 +10,8 @@ import type { ExtractProps } from './extract-props'
 import { parseHandleId } from './path-utils'
 
 export { NOODLES_VERSION } from './migrate-schema'
+
+type NodeJSON<_T = unknown> = ReactFlowNode<Record<string, unknown>>
 
 export type EditorSettings = {
   layoutMode?: 'split' | 'noodles-on-top' | 'output-on-top'
@@ -105,7 +106,9 @@ function deepEqual(a: unknown, b: unknown): boolean {
   const keysA = Object.keys(a as object)
   const keysB = Object.keys(b as object)
   if (keysA.length !== keysB.length) return false
-  return keysA.every(k => deepEqual((a as any)[k], (b as any)[k]))
+  const recordA = a as Record<string, unknown>
+  const recordB = b as Record<string, unknown>
+  return keysA.every(k => deepEqual(recordA[k], recordB[k]))
 }
 
 // Check if two sets have the same elements

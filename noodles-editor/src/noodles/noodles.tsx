@@ -1,4 +1,3 @@
-import type { AnyNodeJSON } from 'SKIP-@xyflow/react'
 import * as deckWidgets from '@deck.gl/widgets'
 import type {
   Connection,
@@ -32,7 +31,6 @@ import {
   DrawRectangleUsingThreePointsMode,
   DrawSquareFromCenterMode,
   DrawSquareMode,
-  EditableGeoJsonLayer,
   ModifyMode,
   ViewMode,
 } from '@deck.gl-community/editable-layers'
@@ -47,8 +45,27 @@ import { globalContextManager } from '../ai-chat/global-context-manager'
 import { getPendingQuickStartAction } from '../components/quick-start-modal'
 import { analytics } from '../utils/analytics'
 import { getKeysForProject, getKeysStore } from './keys-store'
+import { resolveLayerConstructor } from './layer-constructor-resolver'
 import newProjectJSON from './new.json'
-import { LegendWidget, type LegendWidgetProps } from './widgets/legend-widget'
+import { LegendWidget } from './widgets/legend-widget'
+
+type DeckWidgetConstructor = new (props: Record<string, unknown>) => unknown
+
+function resolveWidgetConstructor(type: string): DeckWidgetConstructor | null {
+  if (type === 'LegendWidget') {
+    return LegendWidget as unknown as DeckWidgetConstructor
+  }
+
+  const widgets = deckWidgets as Record<string, unknown>
+  const unprefixed = type.replace(/^_/, '')
+  const WidgetClass = widgets[type] ?? widgets[unprefixed]
+  return typeof WidgetClass === 'function' ? (WidgetClass as DeckWidgetConstructor) : null
+}
+
+function flattenWidgetProps(widgets: unknown[] | undefined): unknown[] {
+  if (!Array.isArray(widgets)) return []
+  return widgets.flatMap(widget => (Array.isArray(widget) ? flattenWidgetProps(widget) : [widget]))
+}
 
 // Get URLs for all example noodles.json files (lazy-loaded)
 const exampleProjectUrls = import.meta.glob('../examples/**/noodles.json', {
@@ -121,6 +138,8 @@ import { calculateViewerPosition } from './utils/viewer-position'
 
 const ChatPanel = lazy(() => import('../ai-chat/chat-panel').then(m => ({ default: m.ChatPanel })))
 
+type AnyNodeJSON = ReactFlowNode<Record<string, unknown>>
+
 export type EmbeddedNoodlesProject = {
   name?: string
   project: NoodlesProjectJSON
@@ -134,8 +153,11 @@ export interface GetNoodlesOptions {
 function getEmbeddedNoodlesProject(): EmbeddedNoodlesProject | null {
   if (typeof window === 'undefined') return null
   return (
-    (window as unknown as { __NOODLES_EMBEDDED_PROJECT__?: EmbeddedNoodlesProject })
-      .__NOODLES_EMBEDDED_PROJECT__ ?? null
+    (
+      window as unknown as {
+        __NOODLES_EMBEDDED_PROJECT__?: EmbeddedNoodlesProject
+      }
+    ).__NOODLES_EMBEDDED_PROJECT__ ?? null
   )
 }
 
@@ -171,13 +193,6 @@ function shouldSkipLayerInstantiation(_type: string, layer: Record<string, unkno
   return layer.visible === false
 }
 
-type LayerConstructor = new (props: Record<string, unknown>) => unknown
-type WidgetConstructor = new (props: Record<string, unknown>) => unknown
-
-const additionalLayerConstructors: Record<string, LayerConstructor> = {
-  EditableGeoJsonLayer: EditableGeoJsonLayer as unknown as LayerConstructor,
-}
-
 const editableGeoJsonModeConstructors: Record<string, unknown> = {
   view: ViewMode,
   modify: ModifyMode,
@@ -194,35 +209,10 @@ const editableGeoJsonModeConstructors: Record<string, unknown> = {
   drawRectangleUsing3Points: DrawRectangleUsingThreePointsMode,
 }
 
-function getLayerConstructor(type: string): LayerConstructor | null {
-  const deckLayers = deck as unknown as Record<string, unknown>
-  const candidate = deckLayers[type] ?? additionalLayerConstructors[type]
-  return typeof candidate === 'function' ? (candidate as LayerConstructor) : null
-}
-
 function normalizeLayerConfig(type: string, layerConfig: Record<string, unknown>) {
   if (type === 'EditableGeoJsonLayer' && typeof layerConfig.mode === 'string') {
     layerConfig.mode = editableGeoJsonModeConstructors[layerConfig.mode] ?? ViewMode
   }
-}
-
-function getWidgetConstructor(type: string): WidgetConstructor | null {
-  const widgets = deckWidgets as Record<string, unknown>
-  const unprefixed = type.replace(/^_/, '')
-  const candidate = widgets[type] ?? widgets[unprefixed]
-  return typeof candidate === 'function' ? (candidate as WidgetConstructor) : null
-}
-
-function flattenWidgetProps(widgets: unknown[]): unknown[] {
-  const flattened: unknown[] = []
-  for (const widget of widgets) {
-    if (Array.isArray(widget)) {
-      flattened.push(...flattenWidgetProps(widget))
-    } else if (widget != null) {
-      flattened.push(widget)
-    }
-  }
-  return flattened
 }
 
 // Syncs edge data from React Flow store to centralized EdgeConnectionStore for O(1) lookups
@@ -274,7 +264,11 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<AnyNodeJSON>([])
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<ReactFlowEdge<unknown>>([])
-  const [defaultViewport, setDefaultViewport] = useState({ x: 0, y: 0, zoom: 1 })
+  const [defaultViewport, setDefaultViewport] = useState({
+    x: 0,
+    y: 0,
+    zoom: 1,
+  })
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [chatInitialMessage, setChatInitialMessage] = useState<string | undefined>(undefined)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -369,12 +363,12 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
   // nodes/edges omitted from deps intentionally — only re-run on structural changes, not position updates during drag
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional - graphStructureKey gates this
   useEffect(() => {
-    // loadProjectFile already called transformGraph directly, so skip this triggered re-run
-    if (isProjectLoadRef.current) return
     if (externalRuntime) {
       setOperators(getOpStore().getAllOps() as Operator<IOperator>[])
       return
     }
+    // loadProjectFile already called transformGraph directly, so skip this triggered re-run
+    if (isProjectLoadRef.current) return
     const ops = transformGraph({ nodes, edges })
     setOperators(ops)
   }, [graphStructureKey, externalRuntime])
@@ -388,6 +382,7 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
 
   // Bind timeline tracks for all operators (outside ReactFlow rendering pipeline).
   useEffect(() => {
+    if (externalRuntime) return
     const newCleanupFns = new Map<string, () => void>()
     const currentOperatorIds = new Set(operators.map(op => op.id))
 
@@ -405,7 +400,7 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
         cleanup()
       }
     }
-  }, [operators])
+  }, [operators, externalRuntime])
 
   // Use shared hook for project modifications
   const {
@@ -548,7 +543,10 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
       )
       setTargetedEdge(
         edge
-          ? { id: edge.id, compatible: connectionDragState.compatibleEdgeIds.has(edge.id) }
+          ? {
+              id: edge.id,
+              compatible: connectionDragState.compatibleEdgeIds.has(edge.id),
+            }
           : null
       )
     },
@@ -751,20 +749,24 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
         store.clearOps()
       }
 
-      // Load timeline state before transformGraph so field bindings see the right keyframe data
-      clearAllBindings()
-      const hasTimeline = timeline && Object.keys(timeline).length > 0
-      if (hasTimeline) {
-        try {
-          // Timeline data uses a Theatre.js-compatible JSON format for backwards compatibility.
-          timelineStore.fromTheatreJSON(
-            timeline as unknown as import('../timeline/types').TheatreTimelineData
-          )
-        } catch (error) {
-          console.error('Failed to load timeline:', error)
+      // Load timeline state before transformGraph so field bindings see the right keyframe data.
+      // In externalRuntime mode the host app owns the shared timeline store. Loading an embedded
+      // project here would reset live playback position/length just because the debug editor opened.
+      if (!externalRuntime) {
+        clearAllBindings()
+        const hasTimeline = timeline && Object.keys(timeline).length > 0
+        if (hasTimeline) {
+          try {
+            // Timeline data uses a Theatre.js-compatible JSON format for backwards compatibility.
+            timelineStore.fromTheatreJSON(
+              timeline as unknown as import('../timeline/types').TheatreTimelineData
+            )
+          } catch (error) {
+            console.error('Failed to load timeline:', error)
+          }
+        } else {
+          timelineStore.reset()
         }
-      } else {
-        timelineStore.reset()
       }
 
       // Build the operator graph synchronously — operators are ready before any re-render.
@@ -798,7 +800,9 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
       // Navigate to the project URL
       const effectiveRoutePrefix = targetRoutePrefix ?? routePrefix
       if (!embeddedProject) {
-        navigate(name ? `${effectiveRoutePrefix}/${name}` : '/', { replace: true })
+        navigate(name ? `${effectiveRoutePrefix}/${name}` : '/', {
+          replace: true,
+        })
       }
 
       setHasUnsavedChanges(false)
@@ -830,7 +834,6 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
         return
       }
 
-      // If no projectName, load the default new project
       const embedded = embeddedProject
       if (embedded) {
         try {
@@ -913,7 +916,7 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
         }
       }
     })()
-  }, [projectName, isExamplesRoute])
+  }, [projectName, isExamplesRoute, embeddedProject])
 
   // Handle pending quick start actions (file upload or LLM question from quick start modal)
   const pendingActionHandledRef = useRef(false)
@@ -973,7 +976,11 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
   const getNoodlesProjectJson = useCallback((): NoodlesProjectJSON => {
     const store = getOpStore()
     const timeline = timelineStore.toTheatreJSON() as unknown as Record<string, unknown>
-    const viewport = reactFlowInstanceRef.current?.getViewport() || { x: 0, y: 0, zoom: 1 }
+    const viewport = reactFlowInstanceRef.current?.getViewport() || {
+      x: 0,
+      y: 0,
+      zoom: 1,
+    }
     const projectKeys = getKeysForProject()
     // Render settings are now stored as OutOp inputs, serialized with the node
 
@@ -1386,11 +1393,15 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
           // Create nested directory structure
           let currentDir = directoryHandle
           for (const folder of subfolders) {
-            currentDir = await currentDir.getDirectoryHandle(folder, { create: true })
+            currentDir = await currentDir.getDirectoryHandle(folder, {
+              create: true,
+            })
           }
 
           // Write file in the nested directory
-          const fileHandle = await currentDir.getFileHandle(fileName, { create: true })
+          const fileHandle = await currentDir.getFileHandle(fileName, {
+            create: true,
+          })
           const writable = await fileHandle.createWritable()
           await writable.write(content)
           await writable.close()
@@ -1469,7 +1480,9 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
           setCurrentDirectory(result.data.directoryHandle, finalProjectName)
           // Set storage type to fileSystemAccess since we used File System Access API
           setActiveStorageType('fileSystemAccess')
-          analytics.track('project_opened', { storageType: 'fileSystemAccess' })
+          analytics.track('project_opened', {
+            storageType: 'fileSystemAccess',
+          })
         } else {
           setError(result.error)
           analytics.track('project_open_failed', {
@@ -1633,53 +1646,60 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
         ({ deckProps: { layers, widgets, ...deckProps }, mapProps }) => {
           // Map layers from POJOs to deck.gl instances
           const instantiatedLayers =
-            layers?.flatMap(({ type, extensions, ...layer }) => {
-              if (shouldSkipLayerInstantiation(type, layer)) return []
+            layers
+              ?.flatMap(({ type, extensions, ...layer }) => {
+                if (shouldSkipLayerInstantiation(type, layer)) return []
 
-              // Instantiate extensions from POJOs if present
-              let instantiatedExtensions: LayerExtension[] | undefined
-              if (extensions && Array.isArray(extensions)) {
-                instantiatedExtensions = extensions
-                  .map((ext: { type: string; [key: string]: unknown }) => {
-                    const { type: extType, ...constructorArgs } = ext
-                    const extensionDef = extensionMap[extType]
-                    if (!extensionDef) {
-                      debugApp(`Unknown extension type: ${extType}`)
-                      return null
-                    }
+                // Instantiate extensions from POJOs if present
+                let instantiatedExtensions: LayerExtension[] | undefined
+                if (extensions && Array.isArray(extensions)) {
+                  instantiatedExtensions = extensions
+                    .map((ext: { type: string; [key: string]: unknown }) => {
+                      const { type: extType, ...constructorArgs } = ext
+                      const extensionDef = extensionMap[extType]
+                      if (!extensionDef) {
+                        debugApp(`Unknown extension type: ${extType}`)
+                        return null
+                      }
 
-                    // Check if it's a wrapped extension (with ExtensionClass and args)
-                    if (typeof extensionDef === 'object' && 'ExtensionClass' in extensionDef) {
-                      return new extensionDef.ExtensionClass(extensionDef.args)
-                    }
+                      // Check if it's a wrapped extension (with ExtensionClass and args)
+                      if (typeof extensionDef === 'object' && 'ExtensionClass' in extensionDef) {
+                        return new extensionDef.ExtensionClass(extensionDef.args)
+                      }
 
-                    // It's a direct class constructor
-                    const ExtensionClass = extensionDef as new (
-                      ...args: unknown[]
-                    ) => LayerExtension
-                    return Object.keys(constructorArgs).length > 0
-                      ? new ExtensionClass(constructorArgs)
-                      : new ExtensionClass()
+                      // It's a direct class constructor
+                      const ExtensionClass = extensionDef as new (
+                        ...args: unknown[]
+                      ) => LayerExtension
+                      return Object.keys(constructorArgs).length > 0
+                        ? new ExtensionClass(constructorArgs)
+                        : new ExtensionClass()
+                    })
+                    .filter((e): e is LayerExtension => e !== null)
+                }
+
+                const LayerClass = resolveLayerConstructor(type)
+                if (!LayerClass) {
+                  debugApp(`Unknown layer type: ${type}`)
+                  return null
+                }
+
+                const layerConfig = { ...layer }
+                normalizeLayerConfig(type, layerConfig)
+
+                try {
+                  return new LayerClass({
+                    ...layerConfig,
+                    ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
+                    // Prevent deck.gl layer errors from crashing the GPU process
+                    onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
                   })
-                  .filter((e): e is LayerExtension => e !== null)
-              }
-
-              const LayerClass = getLayerConstructor(type)
-              if (!LayerClass) {
-                debugApp(`Unknown layer type: ${type}`)
-                return []
-              }
-
-              const layerConfig = { ...layer }
-              normalizeLayerConfig(type, layerConfig)
-
-              return new LayerClass({
-                ...layerConfig,
-                ...(instantiatedExtensions ? { extensions: instantiatedExtensions } : {}),
-                // Prevent deck.gl layer errors from crashing the GPU process
-                onError: (e: Error) => debugVis('Layer error in %s: %o', type, e),
+                } catch (error) {
+                  debugVis('Failed to instantiate layer %s: %o', type, error)
+                  return null
+                }
               })
-            }) || []
+              .filter(layer => layer !== null) || []
 
           // Add overlay layer for selected GeoJSON features
           if (selectedGeoJsonFeatures.length > 0) {
@@ -1709,29 +1729,29 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
             deckProps: {
               ...deckProps,
               layers: instantiatedLayers,
-              widgets: widgets
-                ? flattenWidgetProps(widgets).map(widgetProps => {
-                  if (!widgetProps || typeof widgetProps !== 'object') return widgetProps
-
+              widgets: flattenWidgetProps(widgets)
+                .map(widgetProps => {
+                  if (!widgetProps || typeof widgetProps !== 'object') return null
                   const { type, ...widget } = widgetProps as {
                     type?: unknown
                     [key: string]: unknown
                   }
-                  if (typeof type !== 'string') return widgetProps
+                  if (typeof type !== 'string') return null
 
-                  if (type === 'LegendWidget') {
-                    return new LegendWidget(widget as unknown as LegendWidgetProps)
-                  }
-
-                  const WidgetClass = getWidgetConstructor(type)
+                  const WidgetClass = resolveWidgetConstructor(type)
                   if (!WidgetClass) {
                     debugApp(`Unknown widget type: ${type}`)
                     return null
                   }
-                  return new WidgetClass(widget)
+
+                  try {
+                    return new WidgetClass(widget as Record<string, unknown>)
+                  } catch (error) {
+                    debugVis('Failed to instantiate widget %s: %o', type, error)
+                    return null
+                  }
                 })
-                  .filter(Boolean)
-                : [],
+                .filter(widget => widget !== null),
             },
             mapProps,
           })
