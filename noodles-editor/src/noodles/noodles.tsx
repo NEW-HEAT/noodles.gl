@@ -364,7 +364,21 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional - graphStructureKey gates this
   useEffect(() => {
     if (externalRuntime) {
-      setOperators(getOpStore().getAllOps() as Operator<IOperator>[])
+      // The host app owns and builds the base graph; on initial load (or before
+      // the embedded project is present) just mirror the shared op store. But
+      // editor edits — add / delete / rewire — otherwise land only in ReactFlow
+      // state: without reconciling, deleted ops keep feeding /deck (the layer
+      // still renders) and added nodes never instantiate ("operator not found").
+      // On a genuine structural edit, transformGraph reuses existing ops by id
+      // (preserving host-injected values), instantiates added nodes, disposes
+      // removed ones, and rewires edges — making the embedded editor a true
+      // bidirectional surface over the one shared runtime.
+      if (nodes.length === 0 || isProjectLoadRef.current) {
+        setOperators(getOpStore().getAllOps() as Operator<IOperator>[])
+        return
+      }
+      const ops = transformGraph({ nodes, edges })
+      setOperators(ops)
       return
     }
     // loadProjectFile already called transformGraph directly, so skip this triggered re-run
@@ -1641,6 +1655,12 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
   }, [nodes])
 
   useEffect(() => {
+    // In embedded mode (externalRuntime) the host app owns instantiation and
+    // rendering — NEW HEAT's runtime runs its own globe-aware instantiator over
+    // this same /out vis. This native subscription would redundantly instantiate
+    // layers (with simpler defaults) whose output the host discards. Skip it so
+    // exactly one instantiation path is live, keeping editor + host consistent.
+    if (externalRuntime) return
     if (outOp) {
       const visSub = outOp.inputs.vis.subscribe(
         ({ deckProps: { layers, widgets, ...deckProps }, mapProps }) => {
@@ -1761,7 +1781,7 @@ export function getNoodles(options: GetNoodlesOptions = {}): Visualization {
         visSub.unsubscribe()
       }
     }
-  }, [outOp, selectedGeoJsonFeatures])
+  }, [outOp, selectedGeoJsonFeatures, externalRuntime])
 
   const propertiesPanel = (
     <div className={s.rightPanel}>
